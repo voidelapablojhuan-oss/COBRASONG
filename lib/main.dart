@@ -53,7 +53,7 @@ class _MainShellState extends State<MainShell> {
   int selected = 0;
   bool playing = false;
   int currentTrack = 0;
-  final pages = const ['Início', 'Explorar', 'Salas', 'Jogos', 'Biblioteca'];
+  final pages = const ['Início', 'Explorar', 'Salas', 'Jogos', 'Biblioteca', 'Cartas'];
 
   void playTrack(int index) => setState(() {
     currentTrack = index;
@@ -69,6 +69,7 @@ class _MainShellState extends State<MainShell> {
       const RoomsPage(),
       const GamesPage(),
       LibraryPage(onPlay: playTrack),
+      const CardsPage(),
     ][selected];
 
     return Scaffold(
@@ -93,6 +94,7 @@ class _MainShellState extends State<MainShell> {
           NavigationDestination(icon: Icon(Icons.headphones_rounded), label: 'Salas'),
           NavigationDestination(icon: Icon(Icons.sports_esports_rounded), label: 'Jogos'),
           NavigationDestination(icon: Icon(Icons.library_music_rounded), label: 'Biblioteca'),
+          NavigationDestination(icon: Icon(Icons.style_rounded), label: 'Cartas'),
         ],
       ),
     );
@@ -119,7 +121,7 @@ class _MainShellState extends State<MainShell> {
                 borderRadius: BorderRadius.circular(13),
               ),
               child: Row(children: [
-                Icon([Icons.home_rounded, Icons.explore_rounded, Icons.headphones_rounded, Icons.sports_esports_rounded, Icons.library_music_rounded][i],
+                Icon([Icons.home_rounded, Icons.explore_rounded, Icons.headphones_rounded, Icons.sports_esports_rounded, Icons.library_music_rounded, Icons.style_rounded][i],
                   color: selected == i ? neon : muted, size: 19),
                 const SizedBox(width: 12),
                 Text(pages[i], style: TextStyle(color: selected == i ? Colors.white : muted, fontWeight: selected == i ? FontWeight.w700 : FontWeight.w500)),
@@ -253,6 +255,7 @@ class HomePage extends StatelessWidget {
           FeatureTile(icon: Icons.quiz_rounded, title: 'Quiz musical', detail: 'Teste seus ouvidos', color: neon, onTap: () => onNavigate(3)),
           FeatureTile(icon: Icons.favorite_rounded, title: 'Favoritas', detail: 'Sua coleção', color: const Color(0xFFFF6D9B), onTap: () => onNavigate(4)),
           FeatureTile(icon: Icons.auto_awesome_rounded, title: 'Descobertas', detail: 'Novas vibes', color: const Color(0xFF51D9C2), onTap: () => onNavigate(1)),
+          FeatureTile(icon: Icons.style_rounded, title: 'COBRA CARDS', detail: 'Monte sua coleção', color: const Color(0xFFFFC857), onTap: () => onNavigate(5)),
         ],
       ),
     ],
@@ -319,6 +322,170 @@ class LibraryPage extends StatelessWidget {
     const SizedBox(height: 10),
     for (int i = 0; i < tracks.length; i++) TrackTile(track: tracks[i], index: i, onTap: () => onPlay(i)),
   ]);
+}
+
+
+class CollectibleCard {
+  final String name, subtitle, rarity;
+  final IconData icon;
+  final List<Color> colors;
+  const CollectibleCard(this.name, this.subtitle, this.rarity, this.icon, this.colors);
+}
+
+const collectibleCards = [
+  CollectibleCard('Ritmo Neon', 'A energia que acende a pista', 'LENDÁRIA', Icons.bolt_rounded, [Color(0xFF5C35A8), Color(0xFFB8FF45)]),
+  CollectibleCard('DJ Cósmico', 'O mestre das batidas', 'ÉPICA', Icons.album_rounded, [Color(0xFF173D70), Color(0xFF51D9C2)]),
+  CollectibleCard('Fênix do Som', 'Renasce em cada refrão', 'RARA', Icons.local_fire_department_rounded, [Color(0xFF8E315B), Color(0xFFFF9A55)]),
+  CollectibleCard('Beat de Rua', 'O grave que move a cidade', 'COMUM', Icons.graphic_eq_rounded, [Color(0xFF34364D), Color(0xFF8C91A8)]),
+];
+
+class CardsPage extends StatefulWidget {
+  const CardsPage({super.key});
+  @override
+  State<CardsPage> createState() => _CardsPageState();
+}
+
+class _CardsPageState extends State<CardsPage> {
+  String filter = 'Todas';
+  final Set<String> favorites = {};
+
+  Color _rarityColor(String rarity) {
+    switch (rarity) {
+      case 'LENDÁRIA':
+        return const Color(0xFFFFC857);
+      case 'ÉPICA':
+        return purple;
+      case 'RARA':
+        return const Color(0xFF51D9C2);
+      default:
+        return muted;
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final visible = collectibleCards.where((card) =>
+      filter == 'Todas' || card.rarity == filter.toUpperCase()
+    ).toList();
+
+    return ListView(
+      padding: const EdgeInsets.fromLTRB(22, 12, 22, 28),
+      children: [
+        Container(
+          padding: const EdgeInsets.all(20),
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(22),
+            gradient: const LinearGradient(
+              begin: Alignment.topLeft,
+              end: Alignment.bottomRight,
+              colors: [Color(0xFF38205F), Color(0xFF171521), Color(0xFF342719)],
+            ),
+            border: Border.all(color: const Color(0xFFFFC857).withValues(alpha: .35)),
+          ),
+          child: Row(children: [
+            const Expanded(child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text('COBRA CARDS', style: TextStyle(fontSize: 22, fontWeight: FontWeight.w900, letterSpacing: 1)),
+                SizedBox(height: 6),
+                Text('Sua coleção, seu estilo. Reúna cartas musicais exclusivas.', style: TextStyle(color: Color(0xFFD8D0E5), fontSize: 11, height: 1.4)),
+              ],
+            )),
+            const SizedBox(width: 10),
+            const Icon(Icons.style_rounded, size: 48, color: Color(0xFFFFC857)),
+          ]),
+        ),
+        const SizedBox(height: 20),
+        Row(children: [
+          const Expanded(child: SectionTitle('Minha coleção', subtitle: 'Cartas demonstrativas para conhecer o sistema')),
+          Text('${collectibleCards.length} cartas', style: const TextStyle(color: neon, fontWeight: FontWeight.bold, fontSize: 11)),
+        ]),
+        const SizedBox(height: 12),
+        Wrap(spacing: 7, runSpacing: 7, children: [
+          for (final option in ['Todas', 'Lendária', 'Épica', 'Rara', 'Comum'])
+            ChoiceChip(
+              label: Text(option),
+              selected: filter == option,
+              onSelected: (_) => setState(() => filter = option),
+              selectedColor: purple.withValues(alpha: .35),
+              backgroundColor: panel,
+              labelStyle: TextStyle(color: filter == option ? Colors.white : muted, fontSize: 11),
+              side: BorderSide(color: filter == option ? purple : Colors.white10),
+            ),
+        ]),
+        const SizedBox(height: 14),
+        GridView.builder(
+          shrinkWrap: true,
+          physics: const NeverScrollableScrollPhysics(),
+          itemCount: visible.length,
+          gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+            crossAxisCount: MediaQuery.sizeOf(context).width > 700 ? 3 : 2,
+            crossAxisSpacing: 12,
+            mainAxisSpacing: 12,
+            childAspectRatio: .72,
+          ),
+          itemBuilder: (context, index) {
+            final card = visible[index];
+            final isFavorite = favorites.contains(card.name);
+            final rarityColor = _rarityColor(card.rarity);
+            return Container(
+              padding: const EdgeInsets.all(10),
+              decoration: BoxDecoration(
+                color: panel,
+                borderRadius: BorderRadius.circular(18),
+                border: Border.all(color: rarityColor.withValues(alpha: .55)),
+              ),
+              child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+                Expanded(
+                  child: Container(
+                    decoration: BoxDecoration(
+                      gradient: LinearGradient(
+                        begin: Alignment.topLeft,
+                        end: Alignment.bottomRight,
+                        colors: card.colors,
+                      ),
+                      borderRadius: BorderRadius.circular(13),
+                    ),
+                    child: Stack(children: [
+                      Positioned(right: 8, top: 8, child: Icon(Icons.auto_awesome, color: Colors.white.withValues(alpha: .65), size: 17)),
+                      Center(child: Icon(card.icon, size: 58, color: Colors.white)),
+                      Positioned(left: 8, bottom: 8, child: Text(card.rarity, style: TextStyle(color: Colors.white, fontSize: 9, fontWeight: FontWeight.w900, letterSpacing: 1))),
+                    ]),
+                  ),
+                ),
+                const SizedBox(height: 9),
+                Text(card.name, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontWeight: FontWeight.w900, fontSize: 12)),
+                const SizedBox(height: 3),
+                Text(card.subtitle, maxLines: 2, overflow: TextOverflow.ellipsis, style: const TextStyle(color: muted, fontSize: 9, height: 1.25)),
+                Row(children: [
+                  Expanded(child: Text(card.rarity, style: TextStyle(color: rarityColor, fontSize: 9, fontWeight: FontWeight.bold))),
+                  IconButton(
+                    visualDensity: VisualDensity.compact,
+                    padding: EdgeInsets.zero,
+                    constraints: const BoxConstraints(minWidth: 30, minHeight: 30),
+                    onPressed: () => setState(() {
+                      if (isFavorite) {
+                        favorites.remove(card.name);
+                      } else {
+                        favorites.add(card.name);
+                      }
+                    }),
+                    icon: Icon(isFavorite ? Icons.favorite_rounded : Icons.favorite_border_rounded, color: isFavorite ? const Color(0xFFFF6D9B) : muted, size: 18),
+                  ),
+                ]),
+              ]),
+            );
+          },
+        ),
+        const SizedBox(height: 16),
+        const InfoPanel(
+          icon: Icons.collections_bookmark_rounded,
+          title: 'Mais cartas chegando',
+          text: 'Esta é a primeira prévia da coleção. Pacotes, missões, trocas e salvamento da coleção serão adicionados em etapas futuras.',
+        ),
+      ],
+    );
+  }
 }
 
 class SectionTitle extends StatelessWidget {

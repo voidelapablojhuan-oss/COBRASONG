@@ -382,8 +382,8 @@ class _CardsPageState extends State<CardsPage> {
             ),
             border: Border.all(color: const Color(0xFFFFC857).withValues(alpha: .35)),
           ),
-          child: Row(children: [
-            const Expanded(child: Column(
+          child: const Row(children: [
+            Expanded(child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text('COBRA CARDS', style: TextStyle(fontSize: 22, fontWeight: FontWeight.w900, letterSpacing: 1)),
@@ -391,8 +391,8 @@ class _CardsPageState extends State<CardsPage> {
                 Text('Sua coleção, seu estilo. Reúna cartas musicais exclusivas.', style: TextStyle(color: Color(0xFFD8D0E5), fontSize: 11, height: 1.4)),
               ],
             )),
-            const SizedBox(width: 10),
-            const Icon(Icons.style_rounded, size: 48, color: Color(0xFFFFC857)),
+            SizedBox(width: 10),
+            Icon(Icons.style_rounded, size: 48, color: Color(0xFFFFC857)),
           ]),
         ),
         const SizedBox(height: 20),
@@ -449,7 +449,7 @@ class _CardsPageState extends State<CardsPage> {
                     child: Stack(children: [
                       Positioned(right: 8, top: 8, child: Icon(Icons.auto_awesome, color: Colors.white.withValues(alpha: .65), size: 17)),
                       Center(child: Icon(card.icon, size: 58, color: Colors.white)),
-                      Positioned(left: 8, bottom: 8, child: Text(card.rarity, style: TextStyle(color: Colors.white, fontSize: 9, fontWeight: FontWeight.w900, letterSpacing: 1))),
+                      Positioned(left: 8, bottom: 8, child: Text(card.rarity, style: const TextStyle(color: Colors.white, fontSize: 9, fontWeight: FontWeight.w900, letterSpacing: 1))),
                     ]),
                   ),
                 ),

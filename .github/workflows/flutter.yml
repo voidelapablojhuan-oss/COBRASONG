@@ -1,4 +1,4 @@
-name: Flutter checks
+name: Flutter checks and Android APK
 
 on:
   push:
@@ -7,16 +7,26 @@ on:
     branches: [main]
 
 jobs:
-  analyze-and-test:
+  analyze-test-build:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: subosito/flutter-action@v2
         with:
           channel: stable
+      - name: Generate platform folders
+        run: flutter create . --platforms=android,ios,web,windows
       - name: Install dependencies
         run: flutter pub get
       - name: Analyze
         run: flutter analyze
       - name: Test
         run: flutter test
+      - name: Build Android APK
+        run: flutter build apk --debug
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: COBRASONG-debug-apk
+          path: build/app/outputs/flutter-apk/app-debug.apk
+          if-no-files-found: error

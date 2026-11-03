@@ -1,4 +1,8 @@
+import 'dart:convert';
+
 import 'package:flutter/material.dart';
+import 'package:http/http.dart' as http;
+import 'package:just_audio/just_audio.dart';
 
 void main() => runApp(const CobraSongApp());
 
@@ -43,6 +47,62 @@ const tracks = [
   Track('Velvet Sky', 'Luna Park • Demonstração', Color(0xFFDB7A42)),
 ];
 
+
+class AudiusTrack {
+  final String id;
+  final String title;
+  final String artist;
+  final String? artwork;
+  final int duration;
+
+  const AudiusTrack({
+    required this.id,
+    required this.title,
+    required this.artist,
+    this.artwork,
+    required this.duration,
+  });
+
+  factory AudiusTrack.fromJson(Map<String, dynamic> json) {
+    final user = json['user'] is Map ? json['user'] as Map : const {};
+    final artworkData = json['artwork'] is Map ? json['artwork'] as Map : const {};
+    return AudiusTrack(
+      id: '${json['id'] ?? ''}',
+      title: '${json['title'] ?? 'Faixa sem título'}',
+      artist: '${user['name'] ?? 'Artista Audius'}',
+      artwork: artworkData['150x150']?.toString() ?? artworkData['1000x1000']?.toString(),
+      duration: (json['duration'] as num?)?.toInt() ?? 0,
+    );
+  }
+}
+
+class AudiusService {
+  static const _base = 'https://api.audius.co/v1';
+
+  Future<List<AudiusTrack>> search(String query) async {
+    final uri = Uri.parse('$_base/tracks/search').replace(queryParameters: {
+      'query': query,
+      'limit': '20',
+      'app_name': 'COBRASONG',
+    });
+    final response = await http.get(uri).timeout(const Duration(seconds: 20));
+    if (response.statusCode != 200) {
+      throw Exception('O catálogo respondeu com status ${response.statusCode}.');
+    }
+    final decoded = jsonDecode(response.body) as Map<String, dynamic>;
+    final data = decoded['data'];
+    if (data is! List) return [];
+    return data
+        .whereType<Map>()
+        .map((item) => AudiusTrack.fromJson(Map<String, dynamic>.from(item)))
+        .where((track) => track.id.isNotEmpty)
+        .toList();
+  }
+
+  String streamUrl(String trackId) =>
+      '$_base/tracks/${Uri.encodeComponent(trackId)}/stream?app_name=COBRASONG';
+}
+
 class MainShell extends StatefulWidget {
   const MainShell({super.key});
   @override
@@ -53,19 +113,54 @@ class _MainShellState extends State<MainShell> {
   int selected = 0;
   bool playing = false;
   int currentTrack = 0;
+  AudiusTrack? currentAudiusTrack;
+  late final AudioPlayer audioPlayer;
   final pages = const ['Início', 'Explorar', 'Salas', 'Jogos', 'Biblioteca', 'Cartas'];
 
-  void playTrack(int index) => setState(() {
-    currentTrack = index;
-    playing = true;
-  });
+  @override
+  void initState() {
+    super.initState();
+    audioPlayer = AudioPlayer();
+  }
+
+  @override
+  void dispose() {
+    audioPlayer.dispose();
+    super.dispose();
+  }
+
+  void playTrack(int index) {
+    audioPlayer.stop();
+    setState(() {
+      currentAudiusTrack = null;
+      currentTrack = index;
+      playing = true;
+    });
+  }
+
+  Future<void> playAudiusTrack(AudiusTrack track) async {
+    setState(() {
+      currentAudiusTrack = track;
+      playing = true;
+    });
+    try {
+      await audioPlayer.setUrl(AudiusService().streamUrl(track.id));
+      await audioPlayer.play();
+    } catch (error) {
+      if (!mounted) return;
+      setState(() => playing = false);
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Não foi possível tocar essa faixa: $error')),
+      );
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
     final wide = MediaQuery.sizeOf(context).width >= 850;
     final page = [
       HomePage(onPlay: playTrack, onNavigate: (i) => setState(() => selected = i)),
-      ExplorePage(onPlay: playTrack),
+      ExplorePage(onPlay: playAudiusTrack),
       const RoomsPage(),
       const GamesPage(),
       LibraryPage(onPlay: playTrack),
@@ -218,7 +313,10 @@ class _MainShellState extends State<MainShell> {
     );
   }
 
-  Widget _playerBar() => Container(
+  Widget _playerBar() {
+    final title = currentAudiusTrack?.title ?? tracks[currentTrack].title;
+    final artist = currentAudiusTrack?.artist ?? tracks[currentTrack].artist;
+    return Container(
     margin: const EdgeInsets.fromLTRB(14, 8, 14, 10),
     padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
     decoration: BoxDecoration(color: const Color(0xFF191A28), borderRadius: BorderRadius.circular(17), border: Border.all(color: purple.withValues(alpha: .25))),
@@ -226,13 +324,26 @@ class _MainShellState extends State<MainShell> {
       Container(width: 42, height: 42, decoration: BoxDecoration(gradient: LinearGradient(colors: [tracks[currentTrack].color, purple]), borderRadius: BorderRadius.circular(10)), child: const Icon(Icons.graphic_eq_rounded, color: Colors.white)),
       const SizedBox(width: 11),
       Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-        Text(tracks[currentTrack].title, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 12)),
-        Text(tracks[currentTrack].artist, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(color: muted, fontSize: 10)),
+        Text(title, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 12)),
+        Text(artist, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(color: muted, fontSize: 10)),
       ])),
-      IconButton(onPressed: () => setState(() => playing = !playing), icon: Icon(playing ? Icons.pause_circle_filled_rounded : Icons.play_circle_fill_rounded, color: neon, size: 34)),
-      IconButton(onPressed: () => setState(() { currentTrack = (currentTrack + 1) % tracks.length; playing = true; }), icon: const Icon(Icons.skip_next_rounded, color: Colors.white)),
+      IconButton(
+        onPressed: () async {
+          if (currentAudiusTrack != null) {
+            if (playing) {
+              await audioPlayer.pause();
+            } else {
+              await audioPlayer.play();
+            }
+          }
+          if (mounted) setState(() => playing = !playing);
+        },
+        icon: Icon(playing ? Icons.pause_circle_filled_rounded : Icons.play_circle_fill_rounded, color: neon, size: 34),
+      ),
+      IconButton(onPressed: () { audioPlayer.stop(); setState(() { currentAudiusTrack = null; currentTrack = (currentTrack + 1) % tracks.length; playing = true; }); }, icon: const Icon(Icons.skip_next_rounded, color: Colors.white)),
     ]),
   );
+  }
 }
 
 class Brand extends StatelessWidget {
@@ -310,17 +421,113 @@ class HomePage extends StatelessWidget {
   );
 }
 
-class ExplorePage extends StatelessWidget {
-  final ValueChanged<int> onPlay;
+class ExplorePage extends StatefulWidget {
+  final ValueChanged<AudiusTrack> onPlay;
   const ExplorePage({super.key, required this.onPlay});
+
   @override
-  Widget build(BuildContext context) => ListView(padding: const EdgeInsets.all(22), children: [
-    const SectionTitle('Explore sons novos', subtitle: 'Uma seleção de faixas fictícias para testar a experiência'),
-    const SizedBox(height: 15),
-    for (int i = 0; i < tracks.length; i++) TrackTile(track: tracks[i], index: i, onTap: () => onPlay(i)),
-    const SizedBox(height: 18),
-    const InfoPanel(icon: Icons.public_rounded, title: 'Catálogo em construção', text: 'As músicas reais serão adicionadas somente com arquivos próprios, domínio público ou licenças adequadas.'),
-  ]);
+  State<ExplorePage> createState() => _ExplorePageState();
+}
+
+class _ExplorePageState extends State<ExplorePage> {
+  final controller = TextEditingController();
+  final service = AudiusService();
+  List<AudiusTrack> results = [];
+  bool loading = false;
+  String? error;
+  bool searched = false;
+
+  @override
+  void dispose() {
+    controller.dispose();
+    super.dispose();
+  }
+
+  Future<void> _search() async {
+    final query = controller.text.trim();
+    if (query.isEmpty) return;
+    setState(() {
+      loading = true;
+      error = null;
+      searched = true;
+    });
+    try {
+      final found = await service.search(query);
+      if (!mounted) return;
+      setState(() => results = found);
+    } catch (_) {
+      if (!mounted) return;
+      setState(() => error = 'Não consegui carregar o catálogo. Confira sua internet e tente novamente.');
+    } finally {
+      if (mounted) setState(() => loading = false);
+    }
+  }
+
+  String _time(int seconds) {
+    final minutes = seconds ~/ 60;
+    final remainder = seconds % 60;
+    return '$minutes:${remainder.toString().padLeft(2, '0')}';
+  }
+
+  @override
+  Widget build(BuildContext context) => ListView(
+    padding: const EdgeInsets.all(22),
+    children: [
+      const SectionTitle('Explore músicas', subtitle: 'Busque faixas reais no catálogo aberto do Audius'),
+      const SizedBox(height: 14),
+      Row(children: [
+        Expanded(child: TextField(
+          controller: controller,
+          textInputAction: TextInputAction.search,
+          onSubmitted: (_) => _search(),
+          decoration: const InputDecoration(
+            hintText: 'Nome da música ou artista',
+            filled: true,
+            fillColor: panel,
+            prefixIcon: Icon(Icons.search_rounded),
+            border: OutlineInputBorder(borderRadius: BorderRadius.all(Radius.circular(14)), borderSide: BorderSide.none),
+          ),
+        )),
+        const SizedBox(width: 8),
+        FilledButton(
+          onPressed: loading ? null : _search,
+          style: FilledButton.styleFrom(backgroundColor: neon, foregroundColor: bg, padding: const EdgeInsets.all(16)),
+          child: const Icon(Icons.search_rounded),
+        ),
+      ]),
+      const SizedBox(height: 18),
+      if (loading) const Center(child: Padding(
+        padding: EdgeInsets.all(24),
+        child: CircularProgressIndicator(color: neon),
+      )),
+      if (error != null) InfoPanel(icon: Icons.wifi_off_rounded, title: 'Busca indisponível', text: error!),
+      if (!loading && error == null && searched && results.isEmpty)
+        const InfoPanel(icon: Icons.search_off_rounded, title: 'Nenhuma faixa encontrada', text: 'Tente outro nome de música ou artista.'),
+      if (!searched && !loading)
+        const InfoPanel(icon: Icons.headphones_rounded, title: 'Seu próximo som está aqui', text: 'Digite o nome de uma música ou artista e toque em buscar.'),
+      for (final track in results)
+        ListTile(
+          contentPadding: const EdgeInsets.symmetric(vertical: 5),
+          leading: ClipRRect(
+            borderRadius: BorderRadius.circular(10),
+            child: track.artwork == null
+                ? Container(width: 48, height: 48, color: panel, child: const Icon(Icons.music_note_rounded, color: neon))
+                : Image.network(track.artwork!, width: 48, height: 48, fit: BoxFit.cover,
+                    errorBuilder: (_, __, ___) => Container(width: 48, height: 48, color: panel, child: const Icon(Icons.music_note_rounded, color: neon))),
+          ),
+          title: Text(track.title, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
+          subtitle: Text('${track.artist} • ${_time(track.duration)}', maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(color: muted, fontSize: 11)),
+          trailing: IconButton(
+            tooltip: 'Tocar',
+            onPressed: () => widget.onPlay(track),
+            icon: const Icon(Icons.play_circle_fill_rounded, color: neon, size: 30),
+          ),
+          onTap: () => widget.onPlay(track),
+        ),
+      const SizedBox(height: 12),
+      const Text('As faixas e seus direitos pertencem aos respectivos criadores. A reprodução usa o serviço Audius.', style: TextStyle(color: muted, fontSize: 10)),
+    ],
+  );
 }
 
 class RoomsPage extends StatelessWidget {

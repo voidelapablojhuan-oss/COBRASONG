@@ -213,7 +213,7 @@ class HomePage extends StatelessWidget {
           border: Border.all(color: purple.withValues(alpha: .3)),
         ),
         child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          const Text('SINTA O SOM.\\nCONECTE A GALERA.', style: TextStyle(fontSize: 25, height: 1.12, fontWeight: FontWeight.w900, letterSpacing: -.5)),
+          const Text('SINTA O SOM.\nCONECTE A GALERA.', style: TextStyle(fontSize: 25, height: 1.12, fontWeight: FontWeight.w900, letterSpacing: -.5)),
           const SizedBox(height: 10),
           const Text('Música, amigos e diversão no mesmo lugar.', style: TextStyle(color: Color(0xFFD0C9E2), fontSize: 12)),
           const SizedBox(height: 20),

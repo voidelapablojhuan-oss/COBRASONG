@@ -66,8 +66,8 @@ class _MainShellState extends State<MainShell> {
     final page = [
       HomePage(onPlay: playTrack, onNavigate: (i) => setState(() => selected = i)),
       ExplorePage(onPlay: playTrack),
-      RoomsPage(),
-      GamesPage(),
+      const RoomsPage(),
+      const GamesPage(),
       LibraryPage(onPlay: playTrack),
     ][selected];
 
@@ -293,8 +293,8 @@ class RoomsPage extends StatelessWidget {
 class GamesPage extends StatelessWidget {
   const GamesPage({super.key});
   @override
-  Widget build(BuildContext context) => ListView(padding: const EdgeInsets.all(22), children: [
-    const SectionTitle('Arena COBRA', subtitle: 'Mini games para competir com a galera'),
+  Widget build(BuildContext context) => ListView(padding: const EdgeInsets.all(22), children: const [
+    SectionTitle('Arena COBRA', subtitle: 'Mini games para competir com a galera'),
     const SizedBox(height: 15),
     const FeatureTile(icon: Icons.quiz_rounded, title: 'Adivinhe a música', detail: 'Descubra pelo trecho', color: purple, tall: true),
     const SizedBox(height: 10),

@@ -163,12 +163,60 @@ class _MainShellState extends State<MainShell> {
                 border: InputBorder.none, contentPadding: EdgeInsets.only(top: 10),
               ),
             )
-          : const Icon(Icons.search_rounded, color: muted),
+          : IconButton(
+              tooltip: 'Buscar',
+              onPressed: () => _openSearch(context),
+              icon: const Icon(Icons.search_rounded, color: muted),
+            ),
       ),
       const SizedBox(width: 10),
-      CircleAvatar(backgroundColor: purple.withValues(alpha: .2), child: const Icon(Icons.person_rounded, color: neon)),
+      InkWell(
+        borderRadius: BorderRadius.circular(30),
+        onTap: () => showDialog<void>(
+          context: context,
+          builder: (dialogContext) => AlertDialog(
+            backgroundColor: panel,
+            title: const Text('Perfil COBRASONG'),
+            content: const Text('Você está usando a versão de demonstração. Login e conta serão adicionados em uma próxima atualização.'),
+            actions: [TextButton(onPressed: () => Navigator.pop(dialogContext), child: const Text('Fechar'))],
+          ),
+        ),
+        child: CircleAvatar(backgroundColor: purple.withValues(alpha: .2), child: const Icon(Icons.person_rounded, color: neon)),
+      ),
     ]),
   );
+
+  void _openSearch(BuildContext context) {
+    final controller = TextEditingController();
+    showDialog<void>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        backgroundColor: panel,
+        title: const Text('Buscar no COBRASONG'),
+        content: TextField(
+          controller: controller,
+          autofocus: true,
+          decoration: const InputDecoration(hintText: 'Digite o nome de uma faixa ou artista'),
+          onSubmitted: (value) {
+            Navigator.pop(dialogContext);
+            setState(() => selected = 1);
+            ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Explore as faixas disponíveis para: $value')));
+          },
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(dialogContext), child: const Text('Cancelar')),
+          FilledButton(onPressed: () {
+            final value = controller.text.trim();
+            Navigator.pop(dialogContext);
+            setState(() => selected = 1);
+            if (value.isNotEmpty) {
+              ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Explore as faixas disponíveis para: $value')));
+            }
+          }, child: const Text('Buscar')),
+        ],
+      ),
+    );
+  }
 
   Widget _playerBar() => Container(
     margin: const EdgeInsets.fromLTRB(14, 8, 14, 10),
@@ -289,23 +337,40 @@ class RoomsPage extends StatelessWidget {
       Text('Salas sincronizadas, convites e chat estão no planejamento. Esta tela é uma prévia visual; a conexão em tempo real ainda será implementada.', style: TextStyle(color: muted, height: 1.5, fontSize: 12)),
     ])),
     const SizedBox(height: 14),
-    const InfoPanel(icon: Icons.add_circle_outline_rounded, title: 'Criar uma sala', text: 'Em breve: escolha um nome, convide seus amigos e controle a sessão em conjunto.'),
+    FilledButton.icon(
+      onPressed: () => _showFeatureNotice(context, 'Criar uma sala'),
+      icon: const Icon(Icons.add_rounded),
+      label: const Text('Criar uma sala'),
+      style: FilledButton.styleFrom(backgroundColor: neon, foregroundColor: bg),
+    ),
   ]);
+}
+
+void _showFeatureNotice(BuildContext context, String feature) {
+  showDialog<void>(
+    context: context,
+    builder: (dialogContext) => AlertDialog(
+      backgroundColor: panel,
+      title: Text(feature),
+      content: const Text('Esse recurso ainda está em desenvolvimento. O botão agora responde ao toque, e o jogo será ativado em uma próxima versão.'),
+      actions: [TextButton(onPressed: () => Navigator.pop(dialogContext), child: const Text('Entendi'))],
+    ),
+  );
 }
 
 class GamesPage extends StatelessWidget {
   const GamesPage({super.key});
   @override
-  Widget build(BuildContext context) => ListView(padding: const EdgeInsets.all(22), children: const [
-    SectionTitle('Arena COBRA', subtitle: 'Mini games para competir com a galera'),
-    SizedBox(height: 15),
-    FeatureTile(icon: Icons.quiz_rounded, title: 'Adivinhe a música', detail: 'Descubra pelo trecho', color: purple, tall: true),
-    SizedBox(height: 10),
-    FeatureTile(icon: Icons.bolt_rounded, title: 'Batalha musical', detail: 'Escolha a melhor vibe', color: neon, tall: true),
-    SizedBox(height: 10),
-    FeatureTile(icon: Icons.music_note_rounded, title: 'Desafio de ritmo', detail: 'Entre no compasso', color: Color(0xFF51D9C2), tall: true),
-    SizedBox(height: 14),
-    InfoPanel(icon: Icons.emoji_events_rounded, title: 'XP, níveis e conquistas', text: 'Sistema de pontuação e ranking será conectado aos jogos nas próximas versões.'),
+  Widget build(BuildContext context) => ListView(padding: const EdgeInsets.all(22), children: [
+    const SectionTitle('Arena COBRA', subtitle: 'Mini games para competir com a galera'),
+    const SizedBox(height: 15),
+    FeatureTile(icon: Icons.quiz_rounded, title: 'Adivinhe a música', detail: 'Descubra pelo trecho', color: purple, tall: true, onTap: () => _showFeatureNotice(context, 'Adivinhe a música')),
+    const SizedBox(height: 10),
+    FeatureTile(icon: Icons.bolt_rounded, title: 'Batalha musical', detail: 'Escolha a melhor vibe', color: neon, tall: true, onTap: () => _showFeatureNotice(context, 'Batalha musical')),
+    const SizedBox(height: 10),
+    FeatureTile(icon: Icons.music_note_rounded, title: 'Desafio de ritmo', detail: 'Entre no compasso', color: const Color(0xFF51D9C2), tall: true, onTap: () => _showFeatureNotice(context, 'Desafio de ritmo')),
+    const SizedBox(height: 14),
+    const InfoPanel(icon: Icons.emoji_events_rounded, title: 'XP, níveis e conquistas', text: 'Sistema de pontuação e ranking será conectado aos jogos nas próximas versões.'),
   ]);
 }
 

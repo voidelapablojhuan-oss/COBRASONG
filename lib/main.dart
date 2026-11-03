@@ -293,16 +293,16 @@ class RoomsPage extends StatelessWidget {
 class GamesPage extends StatelessWidget {
   const GamesPage({super.key});
   @override
-  Widget build(BuildContext context) => ListView(padding: const EdgeInsets.all(22), children: [
-    const SectionTitle('Arena COBRA', subtitle: 'Mini games para competir com a galera'),
-    const SizedBox(height: 15),
-    const FeatureTile(icon: Icons.quiz_rounded, title: 'Adivinhe a música', detail: 'Descubra pelo trecho', color: purple, tall: true),
-    const SizedBox(height: 10),
-    const FeatureTile(icon: Icons.bolt_rounded, title: 'Batalha musical', detail: 'Escolha a melhor vibe', color: neon, tall: true),
-    const SizedBox(height: 10),
-    const FeatureTile(icon: Icons.music_note_rounded, title: 'Desafio de ritmo', detail: 'Entre no compasso', color: Color(0xFF51D9C2), tall: true),
-    const SizedBox(height: 14),
-    const InfoPanel(icon: Icons.emoji_events_rounded, title: 'XP, níveis e conquistas', text: 'Sistema de pontuação e ranking será conectado aos jogos nas próximas versões.'),
+  Widget build(BuildContext context) => ListView(padding: const EdgeInsets.all(22), children: const [
+    SectionTitle('Arena COBRA', subtitle: 'Mini games para competir com a galera'),
+    SizedBox(height: 15),
+    FeatureTile(icon: Icons.quiz_rounded, title: 'Adivinhe a música', detail: 'Descubra pelo trecho', color: purple, tall: true),
+    SizedBox(height: 10),
+    FeatureTile(icon: Icons.bolt_rounded, title: 'Batalha musical', detail: 'Escolha a melhor vibe', color: neon, tall: true),
+    SizedBox(height: 10),
+    FeatureTile(icon: Icons.music_note_rounded, title: 'Desafio de ritmo', detail: 'Entre no compasso', color: Color(0xFF51D9C2), tall: true),
+    SizedBox(height: 14),
+    InfoPanel(icon: Icons.emoji_events_rounded, title: 'XP, níveis e conquistas', text: 'Sistema de pontuação e ranking será conectado aos jogos nas próximas versões.'),
   ]);
 }
 

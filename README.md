@@ -4,13 +4,14 @@
 
 COBRASONG é um projeto multiplataforma em Flutter para Android, iOS, Windows e Web.
 
-## Versão atual — 0.1.0
+## Versão atual — 0.2.0
 
 Esta primeira base inclui:
 - Interface responsiva com tema preto, roxo e verde neon.
-- Navegação entre Início, Explorar, Salas, Jogos e Biblioteca.
+- Navegação entre Início, Explorar, Salas, Jogos, Biblioteca e COBRA CARDS.
 - Player demonstrativo com play/pause e troca de faixa.
 - Faixas fictícias para testar a interface, sem áudio protegido por direitos autorais.
+- Seção COBRA CARDS com coleção demonstrativa, filtro por raridade e favoritos.
 - Estrutura inicial preparada para evoluir para experiências sociais e multiplayer.
 
 ## Executar localmente
@@ -33,7 +34,7 @@ O GitHub Actions também gera um APK de depuração e executa análise/testes a 
 
 ## Próximas etapas
 
-1. Persistência de playlists e favoritos.
+1. Persistência de playlists, favoritos e coleção de cartas.
 2. Autenticação e perfis.
 3. Salas sincronizadas com backend em tempo real.
 4. Chat, convites e reações.

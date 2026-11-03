@@ -18,6 +18,7 @@ Esta primeira base inclui:
 É necessário ter o Flutter SDK instalado.
 
 ```bash
+flutter create . --platforms=android,ios,web,windows
 flutter pub get
 flutter run
 ```
@@ -27,6 +28,8 @@ Para compilar:
 - Web: `flutter build web`
 - Windows: `flutter build windows` (em Windows com o suporte habilitado)
 - iOS: `flutter build ios` (em macOS com Xcode)
+
+O GitHub Actions também gera um APK de depuração e executa análise/testes a cada atualização. O APK aparece na área **Actions → execução mais recente → Artifacts** quando a execução termina com sucesso.
 
 ## Próximas etapas
 

@@ -215,6 +215,8 @@ class MainShell extends StatefulWidget {
 
 class _MainShellState extends State<MainShell> {
   int selected = 0;
+  String? _searchRequest;
+  int _searchRequestId = 0;
   bool playing = false;
   int _repeatModeIndex = 0; // 0 = desligado, 1 = repetir fila, 2 = repetir faixa
   int currentTrack = 0;
@@ -462,6 +464,12 @@ class _MainShellState extends State<MainShell> {
   }
 
   Future<void> _removeDownload(AudiusTrack track) async {
+    if (_playQueue.any((item) => item.id == track.id)) {
+      await audioPlayer.stop();
+      _playQueue = [];
+      _queueIndex = 0;
+      if (mounted) setState(() { currentAudiusTrack = null; playing = false; });
+    }
     final path = downloadedPaths[track.id];
     if (path != null) {
       final file = File(path);
@@ -540,6 +548,8 @@ class _MainShellState extends State<MainShell> {
     final page = [
       HomePage(onPlay: playTrack, onNavigate: (i) => setState(() => selected = i)),
       ExplorePage(
+        searchQuery: _searchRequest,
+        searchRequestId: _searchRequestId,
         onQueue: (queue) => _playQueue = queue,
         onPlay: (track) { _rememberTrack(track); playAudiusTrack(track); },
         isFavorite: (track) => favoriteIds.contains(track.id),
@@ -648,8 +658,10 @@ class _MainShellState extends State<MainShell> {
         height: 40,
         decoration: BoxDecoration(color: panel, borderRadius: BorderRadius.circular(13)),
         child: MediaQuery.sizeOf(context).width > 520
-          ? const TextField(
-              decoration: InputDecoration(
+          ? TextField(
+              textInputAction: TextInputAction.search,
+              onSubmitted: _submitSearch,
+              decoration: const InputDecoration(
                 hintText: 'Buscar músicas, artistas...',
                 hintStyle: TextStyle(color: muted, fontSize: 12),
                 prefixIcon: Icon(Icons.search_rounded, size: 19, color: muted),
@@ -679,6 +691,16 @@ class _MainShellState extends State<MainShell> {
     ]),
   );
 
+  void _submitSearch(String value) {
+    final query = value.trim();
+    if (query.isEmpty) return;
+    setState(() {
+      selected = 1;
+      _searchRequest = query;
+      _searchRequestId++;
+    });
+  }
+
   void _openSearch(BuildContext context) {
     final controller = TextEditingController();
     showDialog<void>(
@@ -692,8 +714,7 @@ class _MainShellState extends State<MainShell> {
           decoration: const InputDecoration(hintText: 'Digite o nome de uma faixa ou artista'),
           onSubmitted: (value) {
             Navigator.pop(dialogContext);
-            setState(() => selected = 1);
-            ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Explore as faixas disponíveis para: $value')));
+            _submitSearch(value);
           },
         ),
         actions: [
@@ -701,14 +722,11 @@ class _MainShellState extends State<MainShell> {
           FilledButton(onPressed: () {
             final value = controller.text.trim();
             Navigator.pop(dialogContext);
-            setState(() => selected = 1);
-            if (value.isNotEmpty) {
-              ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Explore as faixas disponíveis para: $value')));
-            }
+            _submitSearch(value);
           }, child: const Text('Buscar')),
         ],
       ),
-    );
+    ).then((_) => controller.dispose());
   }
 
   Future<void> _cycleRepeatMode() async {
@@ -723,7 +741,13 @@ class _MainShellState extends State<MainShell> {
   }
 
   Future<void> _skipNext() async {
-    if (_playQueue.isEmpty || _queueIndex >= _playQueue.length - 1) return;
+    if (_playQueue.isEmpty) return;
+    if (_queueIndex >= _playQueue.length - 1) {
+      if (_repeatModeIndex == 1 && _playQueue.length > 1) {
+        await audioPlayer.seek(Duration.zero, index: 0);
+      }
+      return;
+    }
     await audioPlayer.seek(Duration.zero, index: _queueIndex + 1);
   }
 
@@ -872,11 +896,13 @@ class HomePage extends StatelessWidget {
 class ExplorePage extends StatefulWidget {
   final ValueChanged<AudiusTrack> onPlay;
   final ValueChanged<List<AudiusTrack>> onQueue;
+  final String? searchQuery;
+  final int searchRequestId;
   final bool Function(AudiusTrack) isFavorite;
   final int Function(AudiusTrack) ratingFor;
   final ValueChanged<AudiusTrack> onFavorite, onRate, onAddToPlaylist, onDownload;
   final bool Function(AudiusTrack) isDownloading;
-  const ExplorePage({super.key, required this.onPlay, required this.onQueue, required this.isFavorite, required this.ratingFor, required this.onFavorite, required this.onRate, required this.onAddToPlaylist, required this.onDownload, required this.isDownloading});
+  const ExplorePage({super.key, required this.onPlay, required this.onQueue, this.searchQuery, this.searchRequestId = 0, required this.isFavorite, required this.ratingFor, required this.onFavorite, required this.onRate, required this.onAddToPlaylist, required this.onDownload, required this.isDownloading});
 
   @override
   State<ExplorePage> createState() => _ExplorePageState();
@@ -915,7 +941,23 @@ class _ExplorePageState extends State<ExplorePage> {
   @override
   void initState() {
     super.initState();
-    _loadTrending();
+    final initialQuery = widget.searchQuery?.trim() ?? '';
+    if (initialQuery.isNotEmpty) {
+      controller.text = initialQuery;
+      _search();
+    } else {
+      _loadTrending();
+    }
+  }
+
+  @override
+  void didUpdateWidget(covariant ExplorePage oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (widget.searchRequestId != oldWidget.searchRequestId) {
+      controller.text = widget.searchQuery ?? '';
+      selectedGenre = 'Todos';
+      _search();
+    }
   }
 
   Future<void> _loadTrending() async {

@@ -107,15 +107,14 @@ class AudiusService {
     'https://discoveryprovider.audius.co/v1',
   ];
 
-  Future<List<AudiusTrack>> search(String query, {int offset = 0}) async {
+  Future<List<AudiusTrack>> _getTracks(String path, Map<String, String> params) async {
     http.Response? response;
     Object? lastError;
     for (final base in _bases) {
       try {
-        final uri = Uri.parse('$base/tracks/search').replace(queryParameters: {
-          'query': query,
+        final uri = Uri.parse('$base/$path').replace(queryParameters: {
+          ...params,
           'limit': '20',
-          'offset': '$offset',
           'app_name': 'COBRASONG',
         });
         final candidate = await http.get(uri).timeout(const Duration(seconds: 20));
@@ -140,6 +139,12 @@ class AudiusService {
         .where((track) => track.id.isNotEmpty && track.isStreamable)
         .toList();
   }
+
+  Future<List<AudiusTrack>> search(String query, {int offset = 0}) =>
+      _getTracks('tracks/search', {'query': query, 'offset': '$offset'});
+
+  Future<List<AudiusTrack>> trending({int offset = 0}) =>
+      _getTracks('tracks/trending', {'time': 'week', 'offset': '$offset'});
 
   // Use a Discovery Provider for stream resolution instead of relying on one API gateway.
   String streamUrl(String trackId) =>
@@ -817,6 +822,38 @@ class _ExplorePageState extends State<ExplorePage> {
   bool searched = false;
 
   @override
+  void initState() {
+    super.initState();
+    _loadTrending();
+  }
+
+  Future<void> _loadTrending() async {
+    setState(() {
+      loading = true;
+      loadingMore = false;
+      hasMore = true;
+      offset = 0;
+      error = null;
+      searched = true;
+      results = [];
+    });
+    try {
+      final found = await service.trending();
+      if (!mounted) return;
+      setState(() {
+        results = found;
+        offset = found.length;
+        hasMore = found.length == 20;
+      });
+    } catch (_) {
+      if (!mounted) return;
+      setState(() => error = 'Não consegui carregar as músicas em alta. Tente novamente.');
+    } finally {
+      if (mounted) setState(() => loading = false);
+    }
+  }
+
+  @override
   void dispose() {
     controller.dispose();
     super.dispose();
@@ -851,13 +888,16 @@ class _ExplorePageState extends State<ExplorePage> {
   }
 
   Future<void> _loadMore() async {
-    if (loading || loadingMore || !hasMore || controller.text.trim().isEmpty) return;
+    if (loading || loadingMore || !hasMore) return;
     setState(() {
       loadingMore = true;
       error = null;
     });
     try {
-      final found = await service.search(controller.text.trim(), offset: offset);
+      final query = controller.text.trim();
+      final found = query.isEmpty
+          ? await service.trending(offset: offset)
+          : await service.search(query, offset: offset);
       if (!mounted) return;
       final knownIds = results.map((track) => track.id).toSet();
       final newTracks = found.where((track) => !knownIds.contains(track.id)).toList();
@@ -932,8 +972,11 @@ class _ExplorePageState extends State<ExplorePage> {
       if (error != null) InfoPanel(icon: Icons.wifi_off_rounded, title: 'Busca indisponível', text: error!),
       if (!loading && error == null && searched && results.isEmpty)
         const InfoPanel(icon: Icons.search_off_rounded, title: 'Nenhuma faixa encontrada', text: 'Tente outro nome de música ou artista.'),
-      if (!searched && !loading)
-        const InfoPanel(icon: Icons.headphones_rounded, title: 'Seu próximo som está aqui', text: 'Digite o nome de uma música ou artista e toque em buscar.'),
+      if (!loading && error == null && results.isNotEmpty && controller.text.trim().isEmpty)
+        const Padding(
+          padding: EdgeInsets.only(bottom: 8),
+          child: Text('🔥 Em alta nesta semana • novas faixas para descobrir', style: TextStyle(color: neon, fontSize: 12, fontWeight: FontWeight.bold)),
+        ),
       for (final track in results)
         ListTile(
           contentPadding: const EdgeInsets.symmetric(vertical: 5),

@@ -1,9 +1,11 @@
 import 'dart:convert';
+import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import 'package:just_audio/just_audio.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:path_provider/path_provider.dart';
 
 void main() => runApp(const CobraSongApp());
 
@@ -55,6 +57,7 @@ class AudiusTrack {
   final String artist;
   final String? artwork;
   final int duration;
+  final bool downloadable;
 
   const AudiusTrack({
     required this.id,
@@ -62,11 +65,13 @@ class AudiusTrack {
     required this.artist,
     this.artwork,
     required this.duration,
+    this.downloadable = false,
   });
 
   Map<String, dynamic> toJson() => {
     'id': id, 'title': title, 'user': {'name': artist},
     'artwork': {'150x150': artwork}, 'duration': duration,
+    'downloadable': downloadable,
   };
 
   factory AudiusTrack.fromJson(Map<String, dynamic> json) {
@@ -78,6 +83,7 @@ class AudiusTrack {
       artist: '${user['name'] ?? 'Artista Audius'}',
       artwork: artworkData['150x150']?.toString() ?? artworkData['1000x1000']?.toString(),
       duration: (json['duration'] as num?)?.toInt() ?? 0,
+      downloadable: json['downloadable'] == true,
     );
   }
 }
@@ -108,6 +114,9 @@ class AudiusService {
 
   String streamUrl(String trackId) =>
       '$_base/tracks/${Uri.encodeComponent(trackId)}/stream?app_name=COBRASONG';
+
+  String downloadUrl(String trackId) =>
+      '$_base/tracks/${Uri.encodeComponent(trackId)}/download?app_name=COBRASONG';
 }
 
 class MusicPlaylist {
@@ -138,6 +147,8 @@ class _MainShellState extends State<MainShell> {
   final Set<String> favoriteIds = {};
   final Map<String, int> ratings = {};
   final Map<String, AudiusTrack> savedTracks = {};
+  final Map<String, String> downloadedPaths = {};
+  final Set<String> downloadingIds = {};
   final List<MusicPlaylist> playlists = [];
   final pages = const ['Início', 'Explorar', 'Salas', 'Jogos', 'Biblioteca', 'Cartas'];
 
@@ -155,6 +166,7 @@ class _MainShellState extends State<MainShell> {
       final rate = jsonDecode(prefs.getString('cobra_ratings') ?? '{}') as Map;
       final lists = jsonDecode(prefs.getString('cobra_playlists') ?? '[]') as List;
       final saved = jsonDecode(prefs.getString('cobra_saved_tracks') ?? '{}') as Map;
+      final downloads = jsonDecode(prefs.getString('cobra_downloads') ?? '{}') as Map;
       if (!mounted) return;
       setState(() {
         favoriteIds.addAll(fav.map((e) => e.toString()));
@@ -163,6 +175,7 @@ class _MainShellState extends State<MainShell> {
         for (final e in saved.entries) {
           if (e.value is Map) savedTracks[e.key.toString()] = AudiusTrack.fromJson(Map<String,dynamic>.from(e.value as Map));
         }
+        downloadedPaths.addAll(downloads.map((k, v) => MapEntry(k.toString(), v.toString())));
       });
     } catch (_) {}
   }
@@ -173,6 +186,7 @@ class _MainShellState extends State<MainShell> {
     await prefs.setString('cobra_ratings', jsonEncode(ratings));
     await prefs.setString('cobra_playlists', jsonEncode(playlists.map((p) => p.toJson()).toList()));
     await prefs.setString('cobra_saved_tracks', jsonEncode(savedTracks.map((k,v) => MapEntry(k,v.toJson()))));
+    await prefs.setString('cobra_downloads', jsonEncode(downloadedPaths));
   }
 
   void _rememberTrack(AudiusTrack track) { savedTracks[track.id] = track; _saveLibrary(); }
@@ -263,6 +277,82 @@ class _MainShellState extends State<MainShell> {
     });
   }
 
+  Future<void> _downloadTrack(AudiusTrack track) async {
+    if (!track.downloadable) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Esta faixa não está liberada para download pelo criador.')));
+      return;
+    }
+    if (downloadedPaths.containsKey(track.id) && await File(downloadedPaths[track.id]!).exists()) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Essa música já está salva para ouvir offline.')));
+      return;
+    }
+    setState(() => downloadingIds.add(track.id));
+    final client = http.Client();
+    try {
+      final request = http.Request('GET', Uri.parse(AudiusService().downloadUrl(track.id)));
+      final response = await client.send(request).timeout(const Duration(seconds: 45));
+      if (response.statusCode != 200) {
+        throw Exception('Download indisponível (HTTP ${response.statusCode}).');
+      }
+      final directory = await getApplicationSupportDirectory();
+      final safeId = track.id.replaceAll(RegExp(r'[^a-zA-Z0-9_-]'), '_');
+      final file = File('${directory.path}/cobra_$safeId.mp3');
+      final sink = file.openWrite();
+      try {
+        await for (final chunk in response.stream) {
+          sink.add(chunk);
+        }
+        await sink.flush();
+      } finally {
+        await sink.close();
+      }
+      if (!mounted) return;
+      setState(() {
+        savedTracks[track.id] = track;
+        downloadedPaths[track.id] = file.path;
+        downloadingIds.remove(track.id);
+      });
+      await _saveLibrary();
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('“${track.title}” salva para ouvir offline!')));
+    } catch (error) {
+      if (!mounted) return;
+      setState(() => downloadingIds.remove(track.id));
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Não foi possível baixar: $error')));
+    } finally {
+      client.close();
+      if (mounted && downloadingIds.contains(track.id)) setState(() => downloadingIds.remove(track.id));
+    }
+  }
+
+  Future<void> _playDownloaded(AudiusTrack track) async {
+    final path = downloadedPaths[track.id];
+    if (path == null || !await File(path).exists()) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Arquivo offline não encontrado. Baixe a música novamente.')));
+      return;
+    }
+    try {
+      await audioPlayer.setFilePath(path);
+      if (!mounted) return;
+      setState(() { currentAudiusTrack = track; playing = true; });
+      await audioPlayer.play();
+    } catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Não foi possível tocar offline: $error')));
+    }
+  }
+
+  Future<void> _removeDownload(AudiusTrack track) async {
+    final path = downloadedPaths[track.id];
+    if (path != null) {
+      final file = File(path);
+      if (await file.exists()) await file.delete();
+    }
+    if (!mounted) return;
+    setState(() => downloadedPaths.remove(track.id));
+    await _saveLibrary();
+  }
+
   Future<void> playAudiusTrack(AudiusTrack track) async {
     setState(() {
       currentAudiusTrack = track;
@@ -292,6 +382,8 @@ class _MainShellState extends State<MainShell> {
         onFavorite: _toggleFavorite,
         onRate: _rateTrack,
         onAddToPlaylist: _addToPlaylist,
+        onDownload: _downloadTrack,
+        isDownloading: (track) => downloadingIds.contains(track.id),
       ),
       const RoomsPage(),
       const GamesPage(),
@@ -301,6 +393,8 @@ class _MainShellState extends State<MainShell> {
         playlists: playlists, savedTracks: savedTracks, ratings: ratings,
         onPlayAudius: playAudiusTrack, onRemoveFavorite: _toggleFavorite,
         onCreatePlaylist: _createPlaylist, onAddTrack: _addToPlaylist,
+        downloadedTracks: downloadedPaths.keys.map((id) => savedTracks[id]).whereType<AudiusTrack>().toList(),
+        onPlayDownloaded: _playDownloaded, onRemoveDownload: _removeDownload,
         onRemoveFromPlaylist: (p, track) { setState(() => p.trackIds.remove(track.id)); _saveLibrary(); },
       ),
       const CardsPage(),
@@ -564,8 +658,9 @@ class ExplorePage extends StatefulWidget {
   final ValueChanged<AudiusTrack> onPlay;
   final bool Function(AudiusTrack) isFavorite;
   final int Function(AudiusTrack) ratingFor;
-  final ValueChanged<AudiusTrack> onFavorite, onRate, onAddToPlaylist;
-  const ExplorePage({super.key, required this.onPlay, required this.isFavorite, required this.ratingFor, required this.onFavorite, required this.onRate, required this.onAddToPlaylist});
+  final ValueChanged<AudiusTrack> onFavorite, onRate, onAddToPlaylist, onDownload;
+  final bool Function(AudiusTrack) isDownloading;
+  const ExplorePage({super.key, required this.onPlay, required this.isFavorite, required this.ratingFor, required this.onFavorite, required this.onRate, required this.onAddToPlaylist, required this.onDownload, required this.isDownloading});
 
   @override
   State<ExplorePage> createState() => _ExplorePageState();
@@ -701,12 +796,14 @@ class _ExplorePageState extends State<ExplorePage> {
               if (action == 'favorite') widget.onFavorite(track);
               if (action == 'rate') widget.onRate(track);
               if (action == 'playlist') widget.onAddToPlaylist(track);
+              if (action == 'download') widget.onDownload(track);
             },
             itemBuilder: (_) => [
               const PopupMenuItem(value: 'play', child: Text('Tocar')),
               PopupMenuItem(value: 'favorite', child: Text(widget.isFavorite(track) ? 'Remover dos favoritos' : 'Favoritar')),
               PopupMenuItem(value: 'rate', child: Text('Avaliar • ${widget.ratingFor(track)}/5')),
               const PopupMenuItem(value: 'playlist', child: Text('Adicionar à playlist')),
+              if (track.downloadable) PopupMenuItem(value: 'download', child: Text(widget.isDownloading(track) ? 'Baixando...' : 'Baixar para ouvir offline')),
             ],
             icon: const Icon(Icons.more_vert_rounded, color: neon),
           ),
@@ -793,10 +890,12 @@ class LibraryPage extends StatelessWidget {
   final List<MusicPlaylist> playlists;
   final Map<String, AudiusTrack> savedTracks;
   final Map<String, int> ratings;
+  final List<AudiusTrack> downloadedTracks;
+  final ValueChanged<AudiusTrack> onPlayDownloaded, onRemoveDownload;
   final ValueChanged<AudiusTrack> onPlayAudius, onRemoveFavorite, onAddTrack;
   final VoidCallback onCreatePlaylist;
   final void Function(MusicPlaylist, AudiusTrack) onRemoveFromPlaylist;
-  const LibraryPage({super.key, required this.onPlay, required this.favoriteTracks, required this.playlists, required this.savedTracks, required this.ratings, required this.onPlayAudius, required this.onRemoveFavorite, required this.onCreatePlaylist, required this.onAddTrack, required this.onRemoveFromPlaylist});
+  const LibraryPage({super.key, required this.onPlay, required this.favoriteTracks, required this.playlists, required this.savedTracks, required this.ratings, required this.downloadedTracks, required this.onPlayDownloaded, required this.onRemoveDownload, required this.onPlayAudius, required this.onRemoveFavorite, required this.onCreatePlaylist, required this.onAddTrack, required this.onRemoveFromPlaylist});
 
   @override
   Widget build(BuildContext context) => ListView(padding: const EdgeInsets.all(22), children: [
@@ -843,6 +942,23 @@ class LibraryPage extends StatelessWidget {
             ),
         ],
       ),
+    ),
+    const SizedBox(height: 20),
+    Row(children: [
+      const Expanded(child: Text('Disponíveis offline', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16))),
+      Text('${downloadedTracks.length} músicas', style: const TextStyle(color: neon, fontSize: 11)),
+    ]),
+    if (downloadedTracks.isEmpty) const Padding(
+      padding: EdgeInsets.symmetric(vertical: 12),
+      child: InfoPanel(icon: Icons.offline_pin_rounded, title: 'Nenhum download ainda', text: 'Em Explorar, abra o menu de uma faixa liberada pelo criador e escolha “Baixar para ouvir offline”.'),
+    ),
+    for (final track in downloadedTracks) ListTile(
+      contentPadding: EdgeInsets.zero,
+      leading: const Icon(Icons.offline_pin_rounded, color: neon),
+      title: Text(track.title, maxLines: 1, overflow: TextOverflow.ellipsis),
+      subtitle: Text(track.artist, style: const TextStyle(color: muted, fontSize: 11)),
+      trailing: IconButton(tooltip: 'Apagar download', icon: const Icon(Icons.delete_outline_rounded, color: muted), onPressed: () => onRemoveDownload(track)),
+      onTap: () => onPlayDownloaded(track),
     ),
     const SizedBox(height: 18),
     const Text('Sugestões para começar', style: TextStyle(fontWeight: FontWeight.bold)),

@@ -10,6 +10,8 @@ import 'package:just_audio_background/just_audio_background.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:path_provider/path_provider.dart';
 
+bool _audioBackgroundReady = false;
+
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
@@ -20,7 +22,8 @@ Future<void> main() async {
       androidNotificationChannelId: 'com.cobrasong.audio',
       androidNotificationChannelName: 'COBRASONG • Reprodução',
       androidNotificationOngoing: true,
-    ).timeout(const Duration(seconds: 8));
+    );
+    _audioBackgroundReady = true;
   } catch (error, stackTrace) {
     debugPrint('COBRASONG: serviço de áudio indisponível na inicialização: $error');
     debugPrintStack(stackTrace: stackTrace);
@@ -454,12 +457,12 @@ class _MainShellState extends State<MainShell> {
       }
       final sources = _playQueue.map((item) => AudioSource.uri(
         Uri.file(downloadedPaths[item.id]!),
-        tag: MediaItem(
+        tag: _audioBackgroundReady ? MediaItem(
           id: item.id,
           title: item.title,
           artist: item.artist,
           artUri: item.artwork == null ? null : Uri.tryParse(item.artwork!),
-        ),
+        ) : null,
       )).toList();
       final source = sources.length == 1 ? sources.first : ConcatenatingAudioSource(children: sources);
       await audioPlayer.setAudioSource(source, initialIndex: _queueIndex);
@@ -505,12 +508,12 @@ class _MainShellState extends State<MainShell> {
     try {
       final sources = _playQueue.map((item) => AudioSource.uri(
         Uri.parse(item.audioUrl ?? AudiusService().streamUrl(item.id)),
-        tag: MediaItem(
+        tag: _audioBackgroundReady ? MediaItem(
           id: item.id,
           title: item.title,
           artist: item.artist,
           artUri: item.artwork == null ? null : Uri.tryParse(item.artwork!),
-        ),
+        ) : null,
       )).toList();
       final source = sources.length == 1 ? sources.first : ConcatenatingAudioSource(children: sources);
       await audioPlayer.setAudioSource(source, initialIndex: _queueIndex);
@@ -1312,7 +1315,7 @@ class _GuessSongGameState extends State<GuessSongGame> {
     try {
       await widget.player.setAudioSource(AudioSource.uri(
         Uri.parse(widget.service.streamUrl(correct.id)),
-        tag: MediaItem(id: 'quiz-\${correct.id}', title: 'Adivinhe a música', artist: 'COBRASONG'),
+        tag: _audioBackgroundReady ? MediaItem(id: 'quiz-\${correct.id}', title: 'Adivinhe a música', artist: 'COBRASONG') : null,
       ));
       unawaited(widget.player.play());
       _cutTimer = Timer(const Duration(seconds: _clipSeconds), () => unawaited(widget.player.pause()));

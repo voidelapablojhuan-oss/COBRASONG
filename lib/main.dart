@@ -70,6 +70,8 @@ class AudiusTrack {
   final int duration;
   final bool downloadable;
   final bool isStreamable;
+  final String source;
+  final String? audioUrl;
 
   const AudiusTrack({
     required this.id,
@@ -79,12 +81,15 @@ class AudiusTrack {
     required this.duration,
     this.downloadable = false,
     this.isStreamable = true,
+    this.source = 'Audius',
+    this.audioUrl,
   });
 
   Map<String, dynamic> toJson() => {
     'id': id, 'title': title, 'user': {'name': artist},
     'artwork': {'150x150': artwork}, 'duration': duration,
     'downloadable': downloadable, 'isStreamable': isStreamable,
+    'source': source, 'audioUrl': audioUrl,
   };
 
   factory AudiusTrack.fromJson(Map<String, dynamic> json) {
@@ -98,6 +103,8 @@ class AudiusTrack {
       duration: (json['duration'] as num?)?.toInt() ?? 0,
       downloadable: json['downloadable'] == true,
       isStreamable: json['isStreamable'] != false && json['is_streamable'] != false,
+      source: '${json['source'] ?? 'Audius'}',
+      audioUrl: json['audioUrl']?.toString(),
     );
   }
 }
@@ -153,6 +160,38 @@ class AudiusService {
 
   String downloadUrl(String trackId) =>
       'https://api.audius.co/v1/tracks/${Uri.encodeComponent(trackId)}/download?app_name=COBRASONG';
+}
+
+class ITunesCatalogService {
+  Future<List<AudiusTrack>> search(String query) async {
+    final uri = Uri.https('itunes.apple.com', '/search', {
+      'term': query, 'entity': 'song', 'limit': '20', 'country': 'BR',
+    });
+    final response = await http.get(uri).timeout(const Duration(seconds: 18));
+    if (response.statusCode != 200) {
+      throw Exception('Catálogo iTunes indisponível (${response.statusCode}).');
+    }
+    final decoded = jsonDecode(response.body) as Map<String, dynamic>;
+    final items = decoded['results'];
+    if (items is! List) return [];
+    return items.whereType<Map>().map((raw) {
+      final item = Map<String, dynamic>.from(raw);
+      final preview = item['previewUrl']?.toString();
+      final id = item['trackId']?.toString() ?? '';
+      if (preview == null || preview.isEmpty || id.isEmpty) return null;
+      return AudiusTrack(
+        id: 'itunes:$id',
+        title: item['trackName']?.toString() ?? 'Faixa sem título',
+        artist: item['artistName']?.toString() ?? 'Artista',
+        artwork: item['artworkUrl100']?.toString(),
+        duration: 30,
+        downloadable: false,
+        isStreamable: true,
+        source: 'iTunes • prévia',
+        audioUrl: preview,
+      );
+    }).whereType<AudiusTrack>().toList();
+  }
 }
 
 class MusicPlaylist {
@@ -447,7 +486,7 @@ class _MainShellState extends State<MainShell> {
     });
     try {
       final sources = _playQueue.map((item) => AudioSource.uri(
-        Uri.parse(AudiusService().streamUrl(item.id)),
+        Uri.parse(item.audioUrl ?? AudiusService().streamUrl(item.id)),
         tag: MediaItem(
           id: item.id,
           title: item.title,
@@ -866,12 +905,15 @@ class _ExplorePageState extends State<ExplorePage> {
       results = [];
     });
     try {
-      final found = await service.trending();
+      final catalogs = await Future.wait<List<AudiusTrack>>([
+        service.trending(), ITunesCatalogService().search('hits brasileiros'),
+      ].map((future) => future.catchError((_) => <AudiusTrack>[])));
       if (!mounted) return;
+      final found = [...catalogs[0], ...catalogs[1]];
       setState(() {
         results = found;
-        offset = found.length;
-        hasMore = found.length == 20;
+        offset = catalogs[0].length;
+        hasMore = catalogs[0].length == 20;
       });
     } catch (_) {
       if (!mounted) return;
@@ -900,12 +942,15 @@ class _ExplorePageState extends State<ExplorePage> {
       results = [];
     });
     try {
-      final found = await service.search(query);
+      final catalogs = await Future.wait<List<AudiusTrack>>([
+        service.search(query), ITunesCatalogService().search(query),
+      ].map((future) => future.catchError((_) => <AudiusTrack>[])));
       if (!mounted) return;
+      final found = [...catalogs[0], ...catalogs[1]];
       setState(() {
         results = found;
-        offset = found.length;
-        hasMore = found.length == 20;
+        offset = catalogs[0].length;
+        hasMore = catalogs[0].length == 20;
       });
     } catch (_) {
       if (!mounted) return;
@@ -1016,7 +1061,7 @@ class _ExplorePageState extends State<ExplorePage> {
                     errorBuilder: (_, __, ___) => Container(width: 48, height: 48, color: panel, child: const Icon(Icons.music_note_rounded, color: neon))),
           ),
           title: Text(track.title, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
-          subtitle: Text('${track.artist} • ${_time(track.duration)}', maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(color: muted, fontSize: 11)),
+          subtitle: Text('${track.artist} • ${track.source == 'Audius' ? _time(track.duration) : 'prévia de 30s • iTunes'}', maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(color: muted, fontSize: 11)),
           trailing: PopupMenuButton<String>(
             color: panel,
             onSelected: (action) {
@@ -1056,7 +1101,7 @@ class _ExplorePageState extends State<ExplorePage> {
           child: Center(child: Text('Você chegou ao fim destes resultados.', style: TextStyle(color: muted, fontSize: 11))),
         ),
       const SizedBox(height: 12),
-      const Text('As faixas e seus direitos pertencem aos respectivos criadores. A reprodução usa o serviço Audius.', style: TextStyle(color: muted, fontSize: 10)),
+      const Text('Catálogos: Audius (faixas completas conforme disponibilidade) e iTunes (prévia de 30 segundos). Direitos pertencem aos respectivos criadores.', style: TextStyle(color: muted, fontSize: 10)),
     ],
   );
 }

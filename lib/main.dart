@@ -10,6 +10,9 @@ import 'package:just_audio_background/just_audio_background.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:path_provider/path_provider.dart';
 
+AudioPlayer? _sharedAudioPlayer;
+AudioPlayer get sharedAudioPlayer => _sharedAudioPlayer ??= AudioPlayer();
+
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await JustAudioBackground.init(
@@ -17,6 +20,7 @@ Future<void> main() async {
     androidNotificationChannelName: 'COBRASONG • Reprodução',
     androidNotificationOngoing: true,
   );
+  sharedAudioPlayer;
   runApp(const CobraSongApp());
 }
 
@@ -214,13 +218,25 @@ class MainShell extends StatefulWidget {
 }
 
 class _MainShellState extends State<MainShell> {
+  AudioPlayer get audioPlayer => sharedAudioPlayer;
+
   int selected = 0;
+  String? _searchRequest;
+  int _searchRequestId = 0;
   bool playing = false;
+  int _repeatModeIndex = 0; // 0 = desligado, 1 = repetir fila, 2 = repetir faixa
   int currentTrack = 0;
   AudiusTrack? currentAudiusTrack;
-  late final AudioPlayer audioPlayer;
   late final StreamSubscription<int?> _indexSubscription;
   late final StreamSubscription<PlayerState> _playerStateSubscription;
+  Timer? _listeningRewardTimer;
+  int coins = 0;
+  int _listeningCoinsToday = 0;
+  int _gameCoinsToday = 0;
+  String _rewardDay = _todayKey();
+  String _loginClaimDay = '';
+  String _dailyPackClaimDay = '';
+  final Map<String, int> ownedCards = {};
   List<AudiusTrack> _playQueue = [];
   int _queueIndex = 0;
   final Set<String> favoriteIds = {};
@@ -231,10 +247,14 @@ class _MainShellState extends State<MainShell> {
   final List<MusicPlaylist> playlists = [];
   final pages = const ['Início', 'Explorar', 'Salas', 'Jogos', 'Biblioteca', 'Cartas'];
 
+  static String _todayKey() {
+    final now = DateTime.now();
+    return '${now.year}-${now.month.toString().padLeft(2, '0')}-${now.day.toString().padLeft(2, '0')}';
+  }
+
   @override
   void initState() {
     super.initState();
-    audioPlayer = AudioPlayer();
     _indexSubscription = audioPlayer.currentIndexStream.listen((index) {
       if (index == null || index < 0 || index >= _playQueue.length || !mounted) return;
       setState(() {
@@ -245,6 +265,12 @@ class _MainShellState extends State<MainShell> {
     _playerStateSubscription = audioPlayer.playerStateStream.listen((state) {
       if (mounted && playing != state.playing) {
         setState(() => playing = state.playing);
+        if (state.playing) {
+          _startListeningRewards();
+        } else {
+          _listeningRewardTimer?.cancel();
+          _listeningRewardTimer = null;
+        }
       }
     });
     _loadLibrary();
@@ -258,6 +284,10 @@ class _MainShellState extends State<MainShell> {
       final lists = jsonDecode(prefs.getString('cobra_playlists') ?? '[]') as List;
       final saved = jsonDecode(prefs.getString('cobra_saved_tracks') ?? '{}') as Map;
       final downloads = jsonDecode(prefs.getString('cobra_downloads') ?? '{}') as Map;
+      final storedCards = jsonDecode(prefs.getString('cobra_owned_cards') ?? '{}') as Map;
+      final storedDay = prefs.getString('cobra_reward_day') ?? _todayKey();
+      final loginClaimDay = prefs.getString('cobra_login_claim_day') ?? '';
+      final dailyPackClaimDay = prefs.getString('cobra_daily_pack_claim_day') ?? '';
       if (!mounted) return;
       setState(() {
         favoriteIds.addAll(fav.map((e) => e.toString()));
@@ -267,7 +297,35 @@ class _MainShellState extends State<MainShell> {
           if (e.value is Map) savedTracks[e.key.toString()] = AudiusTrack.fromJson(Map<String,dynamic>.from(e.value as Map));
         }
         downloadedPaths.addAll(downloads.map((k, v) => MapEntry(k.toString(), v.toString())));
+        ownedCards.addAll(storedCards.map((k, v) => MapEntry(k.toString(), (v as num).toInt())));
+        _loginClaimDay = loginClaimDay;
+        _dailyPackClaimDay = dailyPackClaimDay;
+        if (storedDay == _todayKey()) {
+          _rewardDay = storedDay;
+          coins = prefs.getInt('cobra_coins') ?? 0;
+          _listeningCoinsToday = prefs.getInt('cobra_listening_coins_today') ?? 0;
+          _gameCoinsToday = prefs.getInt('cobra_game_coins_today') ?? 0;
+        } else {
+          _rewardDay = _todayKey();
+          coins = prefs.getInt('cobra_coins') ?? 0;
+          _listeningCoinsToday = 0;
+          _gameCoinsToday = 0;
+        }
       });
+      if (_loginClaimDay != _todayKey() && mounted) {
+        setState(() {
+          coins += 300;
+          _loginClaimDay = _todayKey();
+        });
+        await _saveLibrary();
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(content: Text('Bônus de login diário: +300 moedas!')),
+            );
+          }
+        });
+      }
     } catch (_) {}
   }
 
@@ -278,7 +336,116 @@ class _MainShellState extends State<MainShell> {
     await prefs.setString('cobra_playlists', jsonEncode(playlists.map((p) => p.toJson()).toList()));
     await prefs.setString('cobra_saved_tracks', jsonEncode(savedTracks.map((k,v) => MapEntry(k,v.toJson()))));
     await prefs.setString('cobra_downloads', jsonEncode(downloadedPaths));
+    await prefs.setInt('cobra_coins', coins);
+    await prefs.setString('cobra_owned_cards', jsonEncode(ownedCards));
+    await prefs.setString('cobra_reward_day', _rewardDay);
+    await prefs.setInt('cobra_listening_coins_today', _listeningCoinsToday);
+    await prefs.setInt('cobra_game_coins_today', _gameCoinsToday);
+    await prefs.setString('cobra_login_claim_day', _loginClaimDay);
+    await prefs.setString('cobra_daily_pack_claim_day', _dailyPackClaimDay);
   }
+
+  void _startListeningRewards() {
+    if (_listeningRewardTimer?.isActive == true) return;
+    _listeningRewardTimer = Timer.periodic(const Duration(minutes: 1), (_) {
+      if (mounted && audioPlayer.playing) _awardCoins(100, fromListening: true);
+    });
+  }
+
+  void _awardCoins(int amount, {bool fromListening = false}) {
+    if (amount <= 0 || !mounted) return;
+    final today = _todayKey();
+    if (_rewardDay != today) {
+      _rewardDay = today;
+      _listeningCoinsToday = 0;
+      _gameCoinsToday = 0;
+    }
+    final earned = fromListening
+        ? min(amount, max(0, 2000 - _listeningCoinsToday))
+        : min(amount, max(0, 1000 - _gameCoinsToday));
+    if (earned <= 0) return;
+    setState(() {
+      coins += earned;
+      if (fromListening) {
+        _listeningCoinsToday += earned;
+      } else {
+        _gameCoinsToday += earned;
+      }
+    });
+    _saveLibrary();
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+      content: Text('+$earned moedas ${fromListening ? 'por ouvir música' : 'pelo jogo'}!'),
+      duration: const Duration(seconds: 2),
+    ));
+  }
+
+  Future<void> _buyPack(CardPack pack) async {
+    if (coins < pack.price) {
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+        content: Text('Faltam ${pack.price - coins} moedas para esse pacote.'),
+      ));
+      return;
+    }
+    final pool = collectibleCards.where((card) => card.rarity == pack.rarity).toList();
+    if (pool.isEmpty) return;
+    final obtained = _drawCards(pool, pack.cardCount);
+    setState(() {
+      coins -= pack.price;
+      for (final card in obtained) {
+        ownedCards.update(card.name, (count) => count + 1, ifAbsent: () => 1);
+      }
+    });
+    await _saveLibrary();
+    if (!mounted) return;
+    await _showPackReveal(pack.name, obtained);
+  }
+
+  List<CollectibleCard> _drawCards(List<CollectibleCard> pool, int count) {
+    final random = Random();
+    return List.generate(count, (_) => pool[random.nextInt(pool.length)]);
+  }
+
+  Future<void> _claimDailyPack() async {
+    final today = _todayKey();
+    if (_dailyPackClaimDay == today) return;
+    final commonCards = collectibleCards.where((card) => card.rarity == 'COMUM').toList();
+    final obtained = _drawCards(commonCards, 3);
+    setState(() {
+      _dailyPackClaimDay = today;
+      for (final card in obtained) {
+        ownedCards.update(card.name, (count) => count + 1, ifAbsent: () => 1);
+      }
+    });
+    await _saveLibrary();
+    if (!mounted) return;
+    await _showPackReveal('Pacote diário grátis', obtained);
+  }
+
+  Future<void> _showPackReveal(String title, List<CollectibleCard> obtained) async {
+    await showDialog<void>(context: context, builder: (dialogContext) => AlertDialog(
+      backgroundColor: panel,
+      title: Text('$title aberto!'),
+      content: Column(mainAxisSize: MainAxisSize.min, children: [
+        const Icon(Icons.auto_awesome_rounded, color: neon, size: 42),
+        const SizedBox(height: 10),
+        for (final card in obtained)
+          ListTile(
+            contentPadding: EdgeInsets.zero,
+            leading: Icon(card.icon, color: _rarityColor(card.rarity)),
+            title: Text(card.name),
+            subtitle: Text(card.rarity),
+          ),
+      ]),
+      actions: [TextButton(onPressed: () => Navigator.pop(dialogContext), child: const Text('Legal!'))],
+    ));
+  }
+
+  Color _rarityColor(String rarity) => switch (rarity) {
+    'LENDÁRIA' => const Color(0xFFFFC857),
+    'ÉPICA' => purple,
+    'RARA' => const Color(0xFF51D9C2),
+    _ => muted,
+  };
 
   void _rememberTrack(AudiusTrack track) { savedTracks[track.id] = track; _saveLibrary(); }
 
@@ -355,9 +522,9 @@ class _MainShellState extends State<MainShell> {
 
   @override
   void dispose() {
+    _listeningRewardTimer?.cancel();
     _indexSubscription.cancel();
     _playerStateSubscription.cancel();
-    audioPlayer.dispose();
     super.dispose();
   }
 
@@ -461,6 +628,12 @@ class _MainShellState extends State<MainShell> {
   }
 
   Future<void> _removeDownload(AudiusTrack track) async {
+    if (_playQueue.any((item) => item.id == track.id)) {
+      await audioPlayer.stop();
+      _playQueue = [];
+      _queueIndex = 0;
+      if (mounted) setState(() { currentAudiusTrack = null; playing = false; });
+    }
     final path = downloadedPaths[track.id];
     if (path != null) {
       final file = File(path);
@@ -515,7 +688,11 @@ class _MainShellState extends State<MainShell> {
       playing = false;
     });
     await Navigator.of(context).push<void>(MaterialPageRoute<void>(
-      builder: (_) => GuessSongGame(player: audioPlayer, service: AudiusService()),
+      builder: (_) => GuessSongGame(
+        player: audioPlayer,
+        service: AudiusService(),
+        onReward: (score) => _awardCoins(score * 100),
+      ),
     ));
     if (!mounted) return;
     await audioPlayer.stop();
@@ -529,7 +706,7 @@ class _MainShellState extends State<MainShell> {
     await audioPlayer.pause();
     if (!mounted) return;
     await Navigator.of(context).push<void>(
-      MaterialPageRoute<void>(builder: (_) => const MemoryGame()),
+      MaterialPageRoute<void>(builder: (_) => MemoryGame(onWin: () => _awardCoins(200))),
     );
   }
 
@@ -539,6 +716,8 @@ class _MainShellState extends State<MainShell> {
     final page = [
       HomePage(onPlay: playTrack, onNavigate: (i) => setState(() => selected = i)),
       ExplorePage(
+        searchQuery: _searchRequest,
+        searchRequestId: _searchRequestId,
         onQueue: (queue) => _playQueue = queue,
         onPlay: (track) { _rememberTrack(track); playAudiusTrack(track); },
         isFavorite: (track) => favoriteIds.contains(track.id),
@@ -561,7 +740,14 @@ class _MainShellState extends State<MainShell> {
         onPlayDownloaded: _playDownloaded, onRemoveDownload: _removeDownload,
         onRemoveFromPlaylist: (p, track) { setState(() => p.trackIds.remove(track.id)); _saveLibrary(); },
       ),
-      const CardsPage(),
+      CardsPage(
+        coins: coins,
+        ownedCards: ownedCards,
+        onBuyPack: _buyPack,
+        loginClaimedToday: _loginClaimDay == _todayKey(),
+        dailyPackClaimed: _dailyPackClaimDay == _todayKey(),
+        onClaimDailyPack: _claimDailyPack,
+      ),
     ][selected];
 
     return Scaffold(
@@ -647,8 +833,10 @@ class _MainShellState extends State<MainShell> {
         height: 40,
         decoration: BoxDecoration(color: panel, borderRadius: BorderRadius.circular(13)),
         child: MediaQuery.sizeOf(context).width > 520
-          ? const TextField(
-              decoration: InputDecoration(
+          ? TextField(
+              textInputAction: TextInputAction.search,
+              onSubmitted: _submitSearch,
+              decoration: const InputDecoration(
                 hintText: 'Buscar músicas, artistas...',
                 hintStyle: TextStyle(color: muted, fontSize: 12),
                 prefixIcon: Icon(Icons.search_rounded, size: 19, color: muted),
@@ -678,6 +866,16 @@ class _MainShellState extends State<MainShell> {
     ]),
   );
 
+  void _submitSearch(String value) {
+    final query = value.trim();
+    if (query.isEmpty) return;
+    setState(() {
+      selected = 1;
+      _searchRequest = query;
+      _searchRequestId++;
+    });
+  }
+
   void _openSearch(BuildContext context) {
     final controller = TextEditingController();
     showDialog<void>(
@@ -691,8 +889,7 @@ class _MainShellState extends State<MainShell> {
           decoration: const InputDecoration(hintText: 'Digite o nome de uma faixa ou artista'),
           onSubmitted: (value) {
             Navigator.pop(dialogContext);
-            setState(() => selected = 1);
-            ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Explore as faixas disponíveis para: $value')));
+            _submitSearch(value);
           },
         ),
         actions: [
@@ -700,18 +897,32 @@ class _MainShellState extends State<MainShell> {
           FilledButton(onPressed: () {
             final value = controller.text.trim();
             Navigator.pop(dialogContext);
-            setState(() => selected = 1);
-            if (value.isNotEmpty) {
-              ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Explore as faixas disponíveis para: $value')));
-            }
+            _submitSearch(value);
           }, child: const Text('Buscar')),
         ],
       ),
-    );
+    ).then((_) => controller.dispose());
+  }
+
+  Future<void> _cycleRepeatMode() async {
+    final next = (_repeatModeIndex + 1) % 3;
+    final mode = switch (next) {
+      1 => LoopMode.all,
+      2 => LoopMode.one,
+      _ => LoopMode.off,
+    };
+    await audioPlayer.setLoopMode(mode);
+    if (mounted) setState(() => _repeatModeIndex = next);
   }
 
   Future<void> _skipNext() async {
-    if (_playQueue.isEmpty || _queueIndex >= _playQueue.length - 1) return;
+    if (_playQueue.isEmpty) return;
+    if (_queueIndex >= _playQueue.length - 1) {
+      if (_repeatModeIndex == 1 && _playQueue.length > 1) {
+        await audioPlayer.seek(Duration.zero, index: 0);
+      }
+      return;
+    }
     await audioPlayer.seek(Duration.zero, index: _queueIndex + 1);
   }
 
@@ -738,6 +949,18 @@ class _MainShellState extends State<MainShell> {
         Text(title, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 12)),
         Text(artist, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(color: muted, fontSize: 10)),
       ])),
+      IconButton(
+        tooltip: _repeatModeIndex == 0
+            ? 'Repetição desligada'
+            : _repeatModeIndex == 1
+                ? 'Repetir playlist'
+                : 'Repetir música',
+        onPressed: _cycleRepeatMode,
+        icon: Icon(
+          _repeatModeIndex == 2 ? Icons.repeat_one_rounded : Icons.repeat_rounded,
+          color: _repeatModeIndex == 0 ? muted : neon,
+        ),
+      ),
       IconButton(
         onPressed: () async {
           if (currentAudiusTrack != null) {
@@ -848,11 +1071,13 @@ class HomePage extends StatelessWidget {
 class ExplorePage extends StatefulWidget {
   final ValueChanged<AudiusTrack> onPlay;
   final ValueChanged<List<AudiusTrack>> onQueue;
+  final String? searchQuery;
+  final int searchRequestId;
   final bool Function(AudiusTrack) isFavorite;
   final int Function(AudiusTrack) ratingFor;
   final ValueChanged<AudiusTrack> onFavorite, onRate, onAddToPlaylist, onDownload;
   final bool Function(AudiusTrack) isDownloading;
-  const ExplorePage({super.key, required this.onPlay, required this.onQueue, required this.isFavorite, required this.ratingFor, required this.onFavorite, required this.onRate, required this.onAddToPlaylist, required this.onDownload, required this.isDownloading});
+  const ExplorePage({super.key, required this.onPlay, required this.onQueue, this.searchQuery, this.searchRequestId = 0, required this.isFavorite, required this.ratingFor, required this.onFavorite, required this.onRate, required this.onAddToPlaylist, required this.onDownload, required this.isDownloading});
 
   @override
   State<ExplorePage> createState() => _ExplorePageState();
@@ -891,7 +1116,23 @@ class _ExplorePageState extends State<ExplorePage> {
   @override
   void initState() {
     super.initState();
-    _loadTrending();
+    final initialQuery = widget.searchQuery?.trim() ?? '';
+    if (initialQuery.isNotEmpty) {
+      controller.text = initialQuery;
+      _search();
+    } else {
+      _loadTrending();
+    }
+  }
+
+  @override
+  void didUpdateWidget(covariant ExplorePage oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (widget.searchRequestId != oldWidget.searchRequestId) {
+      controller.text = widget.searchQuery ?? '';
+      selectedGenre = 'Todos';
+      _search();
+    }
   }
 
   Future<void> _loadTrending() async {
@@ -1164,9 +1405,10 @@ class GamesPage extends StatelessWidget {
 }
 
 class GuessSongGame extends StatefulWidget {
-  const GuessSongGame({super.key, required this.player, required this.service});
+  const GuessSongGame({super.key, required this.player, required this.service, required this.onReward});
   final AudioPlayer player;
   final AudiusService service;
+  final ValueChanged<int> onReward;
 
   @override
   State<GuessSongGame> createState() => _GuessSongGameState();
@@ -1184,6 +1426,7 @@ class _GuessSongGameState extends State<GuessSongGame> {
   bool _loading = true;
   bool _answered = false;
   bool _audioFailed = false;
+  bool _rewarded = false;
   String? _error;
   AudiusTrack? _picked;
   Timer? _cutTimer;
@@ -1209,6 +1452,7 @@ class _GuessSongGameState extends State<GuessSongGame> {
       _error = null;
       _round = 0;
       _score = 0;
+      _rewarded = false;
     });
     try {
       final found = await widget.service.trending();
@@ -1275,6 +1519,10 @@ class _GuessSongGameState extends State<GuessSongGame> {
       await _startRound();
     } else {
       await widget.player.stop();
+      if (!_rewarded && _score > 0) {
+        _rewarded = true;
+        widget.onReward(_score);
+      }
     }
   }
 
@@ -1357,7 +1605,8 @@ class _GuessSongGameState extends State<GuessSongGame> {
 }
 
 class MemoryGame extends StatefulWidget {
-  const MemoryGame({super.key});
+  const MemoryGame({super.key, required this.onWin});
+  final VoidCallback onWin;
   @override
   State<MemoryGame> createState() => _MemoryGameState();
 }
@@ -1370,6 +1619,7 @@ class _MemoryGameState extends State<MemoryGame> {
   int? _first;
   bool _busy = false;
   int _moves = 0;
+  bool _rewarded = false;
 
   @override
   void initState() {
@@ -1384,6 +1634,7 @@ class _MemoryGameState extends State<MemoryGame> {
     _first = null;
     _busy = false;
     _moves = 0;
+    _rewarded = false;
   }
 
   bool get _won => _matched.every((matched) => matched);
@@ -1403,6 +1654,10 @@ class _MemoryGameState extends State<MemoryGame> {
         _matched[index] = true;
         _moves++;
       });
+      if (_won && !_rewarded) {
+        _rewarded = true;
+        widget.onWin();
+      }
     } else {
       _busy = true;
       await Future.delayed(const Duration(milliseconds: 750));
@@ -1546,13 +1801,38 @@ class CollectibleCard {
 
 const collectibleCards = [
   CollectibleCard('Ritmo Neon', 'A energia que acende a pista', 'LENDÁRIA', Icons.bolt_rounded, [Color(0xFF5C35A8), Color(0xFFB8FF45)]),
+  CollectibleCard('Imperatriz do Grave', 'A rainha das frequências', 'LENDÁRIA', Icons.diamond_rounded, [Color(0xFF33146B), Color(0xFFFFC857)]),
   CollectibleCard('DJ Cósmico', 'O mestre das batidas', 'ÉPICA', Icons.album_rounded, [Color(0xFF173D70), Color(0xFF51D9C2)]),
+  CollectibleCard('Lobo do Bass', 'Uiva no ritmo da noite', 'ÉPICA', Icons.graphic_eq_rounded, [Color(0xFF10253F), Color(0xFF734DFF)]),
   CollectibleCard('Fênix do Som', 'Renasce em cada refrão', 'RARA', Icons.local_fire_department_rounded, [Color(0xFF8E315B), Color(0xFFFF9A55)]),
+  CollectibleCard('Violeta Elétrica', 'Uma tempestade de melodias', 'RARA', Icons.flash_on_rounded, [Color(0xFF4A286F), Color(0xFFFF5C9A)]),
   CollectibleCard('Beat de Rua', 'O grave que move a cidade', 'COMUM', Icons.graphic_eq_rounded, [Color(0xFF34364D), Color(0xFF8C91A8)]),
+  CollectibleCard('Cobra DJ', 'A serpente que domina o set', 'COMUM', Icons.pest_control_rounded, [Color(0xFF124B3E), Color(0xFFB8FF45)]),
+  CollectibleCard('Guitarra Solar', 'Acordes que brilham no palco', 'COMUM', Icons.music_note_rounded, [Color(0xFF75421A), Color(0xFFFFC857)]),
+  CollectibleCard('Nuvem Lo-fi', 'Calma para ouvir sem pressa', 'COMUM', Icons.cloud_rounded, [Color(0xFF344F70), Color(0xFF9EA9FF)]),
+];
+
+class CardPack {
+  final String name, rarity;
+  final int price, cardCount;
+  final IconData icon;
+  const CardPack(this.name, this.rarity, this.price, this.cardCount, this.icon);
+}
+
+const cardPacks = [
+  CardPack('Pacote Comum', 'COMUM', 2000, 3, Icons.inventory_2_rounded),
+  CardPack('Pacote Raro', 'RARA', 5000, 3, Icons.auto_awesome_rounded),
+  CardPack('Pacote Épico', 'ÉPICA', 10000, 3, Icons.stars_rounded),
+  CardPack('Pacote Lendário', 'LENDÁRIA', 20000, 3, Icons.diamond_rounded),
 ];
 
 class CardsPage extends StatefulWidget {
-  const CardsPage({super.key});
+  final int coins;
+  final Map<String, int> ownedCards;
+  final ValueChanged<CardPack> onBuyPack;
+  final bool loginClaimedToday, dailyPackClaimed;
+  final VoidCallback onClaimDailyPack;
+  const CardsPage({super.key, required this.coins, required this.ownedCards, required this.onBuyPack, required this.loginClaimedToday, required this.dailyPackClaimed, required this.onClaimDailyPack});
   @override
   State<CardsPage> createState() => _CardsPageState();
 }
@@ -1607,10 +1887,60 @@ class _CardsPageState extends State<CardsPage> {
             Icon(Icons.style_rounded, size: 48, color: Color(0xFFFFC857)),
           ]),
         ),
+        const SizedBox(height: 14),
+        Container(
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 13),
+          decoration: BoxDecoration(color: panel, borderRadius: BorderRadius.circular(15), border: Border.all(color: neon.withValues(alpha: .3))),
+          child: Row(children: [
+            const Icon(Icons.toll_rounded, color: neon),
+            const SizedBox(width: 9),
+            const Expanded(child: Text('Suas moedas', style: TextStyle(fontWeight: FontWeight.bold))),
+            Text('${widget.coins}', style: const TextStyle(color: neon, fontSize: 18, fontWeight: FontWeight.w900)),
+          ]),
+        ),
+        const SizedBox(height: 10),
+        Card(
+          color: panel,
+          child: ListTile(
+            leading: const CircleAvatar(backgroundColor: Color(0x223EFF91), child: Icon(Icons.waving_hand_rounded, color: neon)),
+            title: const Text('Bônus de login diário', style: TextStyle(fontWeight: FontWeight.bold)),
+            subtitle: Text(widget.loginClaimedToday ? '+300 moedas • resgatado hoje' : '+300 moedas • entre no app para receber', style: const TextStyle(color: muted, fontSize: 11)),
+            trailing: Icon(widget.loginClaimedToday ? Icons.check_circle_rounded : Icons.lock_clock_rounded, color: widget.loginClaimedToday ? neon : muted),
+          ),
+        ),
+        const SizedBox(height: 20),
+        const SectionTitle('Loja de pacotes', subtitle: 'Ganhe moedas ouvindo música e jogando; cada pacote vem com 3 cartas da raridade escolhida.'),
+        const SizedBox(height: 10),
+        Card(
+          color: const Color(0xFF1D202A),
+          child: ListTile(
+            leading: const CircleAvatar(backgroundColor: Color(0x223EFF91), child: Icon(Icons.card_giftcard_rounded, color: neon)),
+            title: const Text('Pacote diário grátis', style: TextStyle(fontWeight: FontWeight.bold)),
+            subtitle: Text(widget.dailyPackClaimed ? 'Resgatado hoje • 3 cartas comuns' : 'Disponível hoje • 3 cartas comuns', style: const TextStyle(color: muted, fontSize: 11)),
+            trailing: FilledButton(
+              onPressed: widget.dailyPackClaimed ? null : widget.onClaimDailyPack,
+              child: Text(widget.dailyPackClaimed ? 'Amanhã' : 'Grátis'),
+            ),
+          ),
+        ),
+        for (final pack in cardPacks)
+          Card(
+            color: panel,
+            child: ListTile(
+              leading: CircleAvatar(backgroundColor: _rarityColor(pack.rarity).withValues(alpha: .15), child: Icon(pack.icon, color: _rarityColor(pack.rarity))),
+              title: Text(pack.name, style: const TextStyle(fontWeight: FontWeight.bold)),
+              subtitle: Text('${pack.cardCount} cartas • ${pack.rarity}', style: TextStyle(color: _rarityColor(pack.rarity), fontSize: 11)),
+              trailing: FilledButton.icon(
+                onPressed: widget.coins >= pack.price ? () => widget.onBuyPack(pack) : null,
+                icon: const Icon(Icons.toll_rounded, size: 16),
+                label: Text('${pack.price}'),
+              ),
+            ),
+          ),
         const SizedBox(height: 20),
         Row(children: [
-          const Expanded(child: SectionTitle('Minha coleção', subtitle: 'Cartas demonstrativas para conhecer o sistema')),
-          Text('${collectibleCards.length} cartas', style: const TextStyle(color: neon, fontWeight: FontWeight.bold, fontSize: 11)),
+          const Expanded(child: SectionTitle('Minha coleção', subtitle: 'Cartas conquistadas nos pacotes')),
+          Text('${widget.ownedCards.values.fold<int>(0, (sum, count) => sum + count)} cartas', style: const TextStyle(color: neon, fontWeight: FontWeight.bold, fontSize: 11)),
         ]),
         const SizedBox(height: 12),
         Wrap(spacing: 7, runSpacing: 7, children: [
@@ -1640,6 +1970,7 @@ class _CardsPageState extends State<CardsPage> {
             final card = visible[index];
             final isFavorite = favorites.contains(card.name);
             final rarityColor = _rarityColor(card.rarity);
+            final quantity = widget.ownedCards[card.name] ?? 0;
             return Container(
               padding: const EdgeInsets.all(10),
               decoration: BoxDecoration(
@@ -1658,17 +1989,30 @@ class _CardsPageState extends State<CardsPage> {
                       ),
                       borderRadius: BorderRadius.circular(13),
                     ),
-                    child: Stack(children: [
-                      Positioned(right: 8, top: 8, child: Icon(Icons.auto_awesome, color: Colors.white.withValues(alpha: .65), size: 17)),
-                      Center(child: Icon(card.icon, size: 58, color: Colors.white)),
-                      Positioned(left: 8, bottom: 8, child: Text(card.rarity, style: const TextStyle(color: Colors.white, fontSize: 9, fontWeight: FontWeight.w900, letterSpacing: 1))),
-                    ]),
+                    child: ClipRRect(
+                      borderRadius: BorderRadius.circular(13),
+                      child: Stack(children: [
+                        Positioned(width: 110, height: 110, right: -38, top: -35, child: DecoratedBox(decoration: BoxDecoration(shape: BoxShape.circle, border: Border.all(color: Colors.white.withValues(alpha: .18), width: 12)))),
+                        Positioned(width: 72, height: 72, left: -25, bottom: 16, child: DecoratedBox(decoration: BoxDecoration(shape: BoxShape.circle, color: Colors.white.withValues(alpha: .08)))),
+                        Positioned(left: 9, top: 8, child: Text('COBRA • ${card.rarity}', style: TextStyle(color: Colors.white.withValues(alpha: .78), fontSize: 7, fontWeight: FontWeight.w900, letterSpacing: .7))),
+                        Positioned(right: 8, top: 8, child: Icon(Icons.auto_awesome, color: Colors.white.withValues(alpha: .8), size: 17)),
+                        Center(child: Padding(
+                          padding: const EdgeInsets.only(top: 8, bottom: 22),
+                          child: Icon(card.icon, size: 66, color: Colors.white, shadows: [Shadow(color: Colors.black.withValues(alpha: .35), blurRadius: 15, offset: const Offset(0, 4))]),
+                        )),
+                        Positioned(left: 0, right: 0, bottom: 0, child: Container(
+                          padding: const EdgeInsets.fromLTRB(7, 18, 7, 8),
+                          decoration: BoxDecoration(gradient: LinearGradient(begin: Alignment.topCenter, end: Alignment.bottomCenter, colors: [Colors.transparent, Colors.black.withValues(alpha: .68)])),
+                          child: Text(card.name.toUpperCase(), textAlign: TextAlign.center, maxLines: 2, overflow: TextOverflow.ellipsis, style: const TextStyle(color: Colors.white, fontSize: 9, fontWeight: FontWeight.w900, letterSpacing: .7)),
+                        )),
+                      ]),
+                    ),
                   ),
                 ),
                 const SizedBox(height: 9),
                 Text(card.name, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontWeight: FontWeight.w900, fontSize: 12)),
                 const SizedBox(height: 3),
-                Text(card.subtitle, maxLines: 2, overflow: TextOverflow.ellipsis, style: const TextStyle(color: muted, fontSize: 9, height: 1.25)),
+                Text(quantity > 0 ? 'Na coleção: $quantity • ${card.subtitle}' : 'Ainda não conquistada • ${card.subtitle}', maxLines: 2, overflow: TextOverflow.ellipsis, style: const TextStyle(color: muted, fontSize: 9, height: 1.25)),
                 Row(children: [
                   Expanded(child: Text(card.rarity, style: TextStyle(color: rarityColor, fontSize: 9, fontWeight: FontWeight.bold))),
                   IconButton(
@@ -1690,11 +2034,7 @@ class _CardsPageState extends State<CardsPage> {
           },
         ),
         const SizedBox(height: 16),
-        const InfoPanel(
-          icon: Icons.collections_bookmark_rounded,
-          title: 'Mais cartas chegando',
-          text: 'Esta é a primeira prévia da coleção. Pacotes, missões, trocas e salvamento da coleção serão adicionados em etapas futuras.',
-        ),
+        const InfoPanel(icon: Icons.headphones_rounded, title: 'Jogue e ouça para ganhar', text: 'A cada minuto ouvindo música você ganha 100 moedas (até 2.000 por dia). Os jogos também dão moedas, até 1.000 por dia.'),
       ],
     );
   }

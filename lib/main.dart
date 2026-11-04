@@ -1,13 +1,24 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
+import 'package:audio_service/audio_service.dart';
 import 'package:just_audio/just_audio.dart';
+import 'package:just_audio_background/just_audio_background.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:path_provider/path_provider.dart';
 
-void main() => runApp(const CobraSongApp());
+Future<void> main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+  await JustAudioBackground.init(
+    androidNotificationChannelId: 'com.cobrasong.audio',
+    androidNotificationChannelName: 'COBRASONG • Reprodução',
+    androidNotificationOngoing: true,
+  );
+  runApp(const CobraSongApp());
+}
 
 const Color bg = Color(0xFF090A10);
 const Color panel = Color(0xFF141521);
@@ -144,6 +155,10 @@ class _MainShellState extends State<MainShell> {
   int currentTrack = 0;
   AudiusTrack? currentAudiusTrack;
   late final AudioPlayer audioPlayer;
+  late final StreamSubscription<int?> _indexSubscription;
+  late final StreamSubscription<PlayerState> _playerStateSubscription;
+  List<AudiusTrack> _playQueue = [];
+  int _queueIndex = 0;
   final Set<String> favoriteIds = {};
   final Map<String, int> ratings = {};
   final Map<String, AudiusTrack> savedTracks = {};
@@ -156,6 +171,18 @@ class _MainShellState extends State<MainShell> {
   void initState() {
     super.initState();
     audioPlayer = AudioPlayer();
+    _indexSubscription = audioPlayer.currentIndexStream.listen((index) {
+      if (index == null || index < 0 || index >= _playQueue.length || !mounted) return;
+      setState(() {
+        _queueIndex = index;
+        currentAudiusTrack = _playQueue[index];
+      });
+    });
+    _playerStateSubscription = audioPlayer.playerStateStream.listen((state) {
+      if (mounted && playing != state.playing) {
+        setState(() => playing = state.playing);
+      }
+    });
     _loadLibrary();
   }
 
@@ -264,6 +291,8 @@ class _MainShellState extends State<MainShell> {
 
   @override
   void dispose() {
+    _indexSubscription.cancel();
+    _playerStateSubscription.cancel();
     audioPlayer.dispose();
     super.dispose();
   }
@@ -336,7 +365,28 @@ class _MainShellState extends State<MainShell> {
       return;
     }
     try {
-      await audioPlayer.setFilePath(path);
+      final offlineQueue = downloadedPaths.keys
+          .map((id) => savedTracks[id])
+          .whereType<AudiusTrack>()
+          .where((item) => downloadedPaths[item.id] != null)
+          .toList();
+      _playQueue = offlineQueue.isEmpty ? [track] : offlineQueue;
+      _queueIndex = _playQueue.indexWhere((item) => item.id == track.id);
+      if (_queueIndex < 0) {
+        _playQueue = [track];
+        _queueIndex = 0;
+      }
+      final sources = _playQueue.map((item) => AudioSource.uri(
+        Uri.file(downloadedPaths[item.id]!),
+        tag: MediaItem(
+          id: item.id,
+          title: item.title,
+          artist: item.artist,
+          artUri: item.artwork == null ? null : Uri.tryParse(item.artwork!),
+        ),
+      )).toList();
+      final source = sources.length == 1 ? sources.first : ConcatenatingAudioSource(children: sources);
+      await audioPlayer.setAudioSource(source, initialIndex: _queueIndex);
       if (!mounted) return;
       setState(() { currentAudiusTrack = track; playing = true; });
       await audioPlayer.play();
@@ -358,12 +408,30 @@ class _MainShellState extends State<MainShell> {
   }
 
   Future<void> playAudiusTrack(AudiusTrack track) async {
+    if (_playQueue.isEmpty || !_playQueue.any((item) => item.id == track.id)) {
+      _playQueue = [track];
+    }
+    _queueIndex = _playQueue.indexWhere((item) => item.id == track.id);
+    if (_queueIndex < 0) {
+      _playQueue = [track];
+      _queueIndex = 0;
+    }
     setState(() {
       currentAudiusTrack = track;
       playing = true;
     });
     try {
-      await audioPlayer.setUrl(AudiusService().streamUrl(track.id));
+      final sources = _playQueue.map((item) => AudioSource.uri(
+        Uri.parse(AudiusService().streamUrl(item.id)),
+        tag: MediaItem(
+          id: item.id,
+          title: item.title,
+          artist: item.artist,
+          artUri: item.artwork == null ? null : Uri.tryParse(item.artwork!),
+        ),
+      )).toList();
+      final source = sources.length == 1 ? sources.first : ConcatenatingAudioSource(children: sources);
+      await audioPlayer.setAudioSource(source, initialIndex: _queueIndex);
       await audioPlayer.play();
     } catch (error) {
       if (!mounted) return;
@@ -380,6 +448,7 @@ class _MainShellState extends State<MainShell> {
     final page = [
       HomePage(onPlay: playTrack, onNavigate: (i) => setState(() => selected = i)),
       ExplorePage(
+        onQueue: (queue) => _playQueue = queue,
         onPlay: (track) { _rememberTrack(track); playAudiusTrack(track); },
         isFavorite: (track) => favoriteIds.contains(track.id),
         ratingFor: (track) => ratings[track.id] ?? 0,
@@ -550,6 +619,20 @@ class _MainShellState extends State<MainShell> {
     );
   }
 
+  Future<void> _skipNext() async {
+    if (_playQueue.isEmpty || _queueIndex >= _playQueue.length - 1) return;
+    await audioPlayer.seek(Duration.zero, index: _queueIndex + 1);
+  }
+
+  Future<void> _skipPrevious() async {
+    if (_playQueue.isEmpty) return;
+    if (audioPlayer.position.inSeconds > 3 || _queueIndex == 0) {
+      await audioPlayer.seek(Duration.zero);
+      return;
+    }
+    await audioPlayer.seek(Duration.zero, index: _queueIndex - 1);
+  }
+
   Widget _playerBar() {
     final title = currentAudiusTrack?.title ?? tracks[currentTrack].title;
     final artist = currentAudiusTrack?.artist ?? tracks[currentTrack].artist;
@@ -577,7 +660,13 @@ class _MainShellState extends State<MainShell> {
         },
         icon: Icon(playing ? Icons.pause_circle_filled_rounded : Icons.play_circle_fill_rounded, color: neon, size: 34),
       ),
-      IconButton(onPressed: () { audioPlayer.stop(); setState(() { currentAudiusTrack = null; currentTrack = (currentTrack + 1) % tracks.length; playing = true; }); }, icon: const Icon(Icons.skip_next_rounded, color: Colors.white)),
+      IconButton(
+        tooltip: 'Próxima música',
+        onPressed: currentAudiusTrack == null
+            ? () { audioPlayer.stop(); setState(() { currentTrack = (currentTrack + 1) % tracks.length; playing = true; }); }
+            : _skipNext,
+        icon: const Icon(Icons.skip_next_rounded, color: Colors.white),
+      ),
     ]),
   );
   }
@@ -660,11 +749,12 @@ class HomePage extends StatelessWidget {
 
 class ExplorePage extends StatefulWidget {
   final ValueChanged<AudiusTrack> onPlay;
+  final ValueChanged<List<AudiusTrack>> onQueue;
   final bool Function(AudiusTrack) isFavorite;
   final int Function(AudiusTrack) ratingFor;
   final ValueChanged<AudiusTrack> onFavorite, onRate, onAddToPlaylist, onDownload;
   final bool Function(AudiusTrack) isDownloading;
-  const ExplorePage({super.key, required this.onPlay, required this.isFavorite, required this.ratingFor, required this.onFavorite, required this.onRate, required this.onAddToPlaylist, required this.onDownload, required this.isDownloading});
+  const ExplorePage({super.key, required this.onPlay, required this.onQueue, required this.isFavorite, required this.ratingFor, required this.onFavorite, required this.onRate, required this.onAddToPlaylist, required this.onDownload, required this.isDownloading});
 
   @override
   State<ExplorePage> createState() => _ExplorePageState();
@@ -833,7 +923,7 @@ class _ExplorePageState extends State<ExplorePage> {
           trailing: PopupMenuButton<String>(
             color: panel,
             onSelected: (action) {
-              if (action == 'play') widget.onPlay(track);
+              if (action == 'play') { widget.onQueue(results); widget.onPlay(track); }
               if (action == 'favorite') widget.onFavorite(track);
               if (action == 'rate') widget.onRate(track);
               if (action == 'playlist') widget.onAddToPlaylist(track);
@@ -848,7 +938,7 @@ class _ExplorePageState extends State<ExplorePage> {
             ],
             icon: const Icon(Icons.more_vert_rounded, color: neon),
           ),
-          onTap: () => widget.onPlay(track),
+          onTap: () { widget.onQueue(results); widget.onPlay(track); },
         ),
       if (results.isNotEmpty && hasMore)
         Padding(

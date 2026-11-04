@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import 'package:just_audio/just_audio.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 void main() => runApp(const CobraSongApp());
 
@@ -63,6 +64,11 @@ class AudiusTrack {
     required this.duration,
   });
 
+  Map<String, dynamic> toJson() => {
+    'id': id, 'title': title, 'user': {'name': artist},
+    'artwork': {'150x150': artwork}, 'duration': duration,
+  };
+
   factory AudiusTrack.fromJson(Map<String, dynamic> json) {
     final user = json['user'] is Map ? json['user'] as Map : const {};
     final artworkData = json['artwork'] is Map ? json['artwork'] as Map : const {};
@@ -104,6 +110,19 @@ class AudiusService {
       '$_base/tracks/${Uri.encodeComponent(trackId)}/stream?app_name=COBRASONG';
 }
 
+class MusicPlaylist {
+  final String id;
+  String name;
+  final List<String> trackIds;
+  MusicPlaylist({required this.id, required this.name, List<String>? trackIds}) : trackIds = trackIds ?? [];
+  Map<String, dynamic> toJson() => {'id': id, 'name': name, 'trackIds': trackIds};
+  factory MusicPlaylist.fromJson(Map<String, dynamic> json) => MusicPlaylist(
+    id: '${json['id'] ?? DateTime.now().microsecondsSinceEpoch}',
+    name: '${json['name'] ?? 'Minha playlist'}',
+    trackIds: (json['trackIds'] as List? ?? []).map((e) => e.toString()).toList(),
+  );
+}
+
 class MainShell extends StatefulWidget {
   const MainShell({super.key});
   @override
@@ -116,12 +135,117 @@ class _MainShellState extends State<MainShell> {
   int currentTrack = 0;
   AudiusTrack? currentAudiusTrack;
   late final AudioPlayer audioPlayer;
+  final Set<String> favoriteIds = {};
+  final Map<String, int> ratings = {};
+  final Map<String, AudiusTrack> savedTracks = {};
+  final List<MusicPlaylist> playlists = [];
   final pages = const ['Início', 'Explorar', 'Salas', 'Jogos', 'Biblioteca', 'Cartas'];
 
   @override
   void initState() {
     super.initState();
     audioPlayer = AudioPlayer();
+    _loadLibrary();
+  }
+
+  Future<void> _loadLibrary() async {
+    final prefs = await SharedPreferences.getInstance();
+    try {
+      final fav = jsonDecode(prefs.getString('cobra_favorites') ?? '[]') as List;
+      final rate = jsonDecode(prefs.getString('cobra_ratings') ?? '{}') as Map;
+      final lists = jsonDecode(prefs.getString('cobra_playlists') ?? '[]') as List;
+      final saved = jsonDecode(prefs.getString('cobra_saved_tracks') ?? '{}') as Map;
+      if (!mounted) return;
+      setState(() {
+        favoriteIds.addAll(fav.map((e) => e.toString()));
+        ratings.addAll(rate.map((k,v) => MapEntry(k.toString(), (v as num).toInt())));
+        playlists.addAll(lists.whereType<Map>().map((e) => MusicPlaylist.fromJson(Map<String,dynamic>.from(e))));
+        for (final e in saved.entries) {
+          if (e.value is Map) savedTracks[e.key.toString()] = AudiusTrack.fromJson(Map<String,dynamic>.from(e.value as Map));
+        }
+      });
+    } catch (_) {}
+  }
+
+  Future<void> _saveLibrary() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString('cobra_favorites', jsonEncode(favoriteIds.toList()));
+    await prefs.setString('cobra_ratings', jsonEncode(ratings));
+    await prefs.setString('cobra_playlists', jsonEncode(playlists.map((p) => p.toJson()).toList()));
+    await prefs.setString('cobra_saved_tracks', jsonEncode(savedTracks.map((k,v) => MapEntry(k,v.toJson()))));
+  }
+
+  void _rememberTrack(AudiusTrack track) { savedTracks[track.id] = track; _saveLibrary(); }
+
+  void _toggleFavorite(AudiusTrack track) {
+    setState(() {
+      _rememberTrack(track);
+      if (!favoriteIds.add(track.id)) favoriteIds.remove(track.id);
+    });
+    _saveLibrary();
+  }
+
+  Future<void> _rateTrack(AudiusTrack track) async {
+    _rememberTrack(track);
+    final value = await showDialog<int>(context: context, builder: (dialogContext) {
+      int selected = ratings[track.id] ?? 0;
+      return StatefulBuilder(builder: (context, refresh) => AlertDialog(
+        backgroundColor: panel,
+        title: const Text('Avaliar música'),
+        content: Column(mainAxisSize: MainAxisSize.min, children: [
+          Text(track.title, maxLines: 2, overflow: TextOverflow.ellipsis),
+          const SizedBox(height: 12),
+          Row(mainAxisAlignment: MainAxisAlignment.center, children: List.generate(5, (i) => IconButton(
+            onPressed: () => refresh(() => selected = i + 1),
+            icon: Icon(i < selected ? Icons.star_rounded : Icons.star_border_rounded, color: const Color(0xFFFFC857), size: 30),
+          ))),
+          Text(selected == 0 ? 'Escolha de 1 a 5 estrelas' : '$selected de 5 estrelas', style: const TextStyle(color: muted)),
+        ]),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(dialogContext), child: const Text('Cancelar')),
+          FilledButton(onPressed: selected == 0 ? null : () => Navigator.pop(dialogContext, selected), child: const Text('Salvar')),
+        ],
+      ));
+    });
+    if (value != null && mounted) { setState(() => ratings[track.id] = value); _saveLibrary(); }
+  }
+
+  Future<void> _createPlaylist() async {
+    final controller = TextEditingController();
+    final name = await showDialog<String>(context: context, builder: (dialogContext) => AlertDialog(
+      backgroundColor: panel,
+      title: const Text('Nova playlist'),
+      content: TextField(controller: controller, autofocus: true, maxLength: 40, decoration: const InputDecoration(hintText: 'Nome da playlist')),
+      actions: [
+        TextButton(onPressed: () => Navigator.pop(dialogContext), child: const Text('Cancelar')),
+        FilledButton(onPressed: () { final v = controller.text.trim(); if (v.isNotEmpty) Navigator.pop(dialogContext, v); }, child: const Text('Criar')),
+      ],
+    ));
+    controller.dispose();
+    if (name == null || name.trim().isEmpty || !mounted) return;
+    setState(() => playlists.add(MusicPlaylist(id: DateTime.now().microsecondsSinceEpoch.toString(), name: name.trim())));
+    _saveLibrary();
+  }
+
+  Future<void> _addToPlaylist(AudiusTrack track) async {
+    _rememberTrack(track);
+    if (playlists.isEmpty) await _createPlaylist();
+    if (!mounted || playlists.isEmpty) return;
+    final chosen = await showModalBottomSheet<String>(context: context, backgroundColor: panel, builder: (sheetContext) => SafeArea(child: ListView(
+      shrinkWrap: true,
+      children: [
+        const ListTile(title: Text('Adicionar à playlist', style: TextStyle(fontWeight: FontWeight.bold))),
+        for (final p in playlists) ListTile(
+          leading: const Icon(Icons.queue_music_rounded, color: neon),
+          title: Text(p.name), subtitle: Text('${p.trackIds.length} músicas'),
+          onTap: () => Navigator.pop(sheetContext, p.id),
+        ),
+      ],
+    )));
+    if (chosen == null || !mounted) return;
+    setState(() { final p = playlists.firstWhere((e) => e.id == chosen); if (!p.trackIds.contains(track.id)) p.trackIds.add(track.id); });
+    _saveLibrary();
+    ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Música adicionada à playlist!')));
   }
 
   @override
@@ -161,10 +285,24 @@ class _MainShellState extends State<MainShell> {
     final wide = MediaQuery.sizeOf(context).width >= 850;
     final page = [
       HomePage(onPlay: playTrack, onNavigate: (i) => setState(() => selected = i)),
-      ExplorePage(onPlay: playAudiusTrack),
+      ExplorePage(
+        onPlay: (track) { _rememberTrack(track); playAudiusTrack(track); },
+        isFavorite: (track) => favoriteIds.contains(track.id),
+        ratingFor: (track) => ratings[track.id] ?? 0,
+        onFavorite: _toggleFavorite,
+        onRate: _rateTrack,
+        onAddToPlaylist: _addToPlaylist,
+      ),
       const RoomsPage(),
       const GamesPage(),
-      LibraryPage(onPlay: playTrack),
+      LibraryPage(
+        onPlay: playTrack,
+        favoriteTracks: favoriteIds.map((id) => savedTracks[id]).whereType<AudiusTrack>().toList(),
+        playlists: playlists, savedTracks: savedTracks, ratings: ratings,
+        onPlayAudius: playAudiusTrack, onRemoveFavorite: _toggleFavorite,
+        onCreatePlaylist: _createPlaylist, onAddTrack: _addToPlaylist,
+        onRemoveFromPlaylist: (p, track) { setState(() => p.trackIds.remove(track.id)); _saveLibrary(); },
+      ),
       const CardsPage(),
     ][selected];
 
@@ -424,7 +562,10 @@ class HomePage extends StatelessWidget {
 
 class ExplorePage extends StatefulWidget {
   final ValueChanged<AudiusTrack> onPlay;
-  const ExplorePage({super.key, required this.onPlay});
+  final bool Function(AudiusTrack) isFavorite;
+  final int Function(AudiusTrack) ratingFor;
+  final ValueChanged<AudiusTrack> onFavorite, onRate, onAddToPlaylist;
+  const ExplorePage({super.key, required this.onPlay, required this.isFavorite, required this.ratingFor, required this.onFavorite, required this.onRate, required this.onAddToPlaylist});
 
   @override
   State<ExplorePage> createState() => _ExplorePageState();
@@ -553,10 +694,21 @@ class _ExplorePageState extends State<ExplorePage> {
           ),
           title: Text(track.title, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
           subtitle: Text('${track.artist} • ${_time(track.duration)}', maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(color: muted, fontSize: 11)),
-          trailing: IconButton(
-            tooltip: 'Tocar',
-            onPressed: () => widget.onPlay(track),
-            icon: const Icon(Icons.play_circle_fill_rounded, color: neon, size: 30),
+          trailing: PopupMenuButton<String>(
+            color: panel,
+            onSelected: (action) {
+              if (action == 'play') widget.onPlay(track);
+              if (action == 'favorite') widget.onFavorite(track);
+              if (action == 'rate') widget.onRate(track);
+              if (action == 'playlist') widget.onAddToPlaylist(track);
+            },
+            itemBuilder: (_) => [
+              const PopupMenuItem(value: 'play', child: Text('Tocar')),
+              PopupMenuItem(value: 'favorite', child: Text(widget.isFavorite(track) ? 'Remover dos favoritos' : 'Favoritar')),
+              PopupMenuItem(value: 'rate', child: Text('Avaliar • ${widget.ratingFor(track)}/5')),
+              const PopupMenuItem(value: 'playlist', child: Text('Adicionar à playlist')),
+            ],
+            icon: const Icon(Icons.more_vert_rounded, color: neon),
           ),
           onTap: () => widget.onPlay(track),
         ),
@@ -637,12 +789,61 @@ class GamesPage extends StatelessWidget {
 
 class LibraryPage extends StatelessWidget {
   final ValueChanged<int> onPlay;
-  const LibraryPage({super.key, required this.onPlay});
+  final List<AudiusTrack> favoriteTracks;
+  final List<MusicPlaylist> playlists;
+  final Map<String, AudiusTrack> savedTracks;
+  final Map<String, int> ratings;
+  final ValueChanged<AudiusTrack> onPlayAudius, onRemoveFavorite, onAddTrack;
+  final VoidCallback onCreatePlaylist;
+  final void Function(MusicPlaylist, AudiusTrack) onRemoveFromPlaylist;
+  const LibraryPage({super.key, required this.onPlay, required this.favoriteTracks, required this.playlists, required this.savedTracks, required this.ratings, required this.onPlayAudius, required this.onRemoveFavorite, required this.onCreatePlaylist, required this.onAddTrack, required this.onRemoveFromPlaylist});
+
   @override
   Widget build(BuildContext context) => ListView(padding: const EdgeInsets.all(22), children: [
-    const SectionTitle('Sua biblioteca', subtitle: 'Tudo que você guardar fica por aqui'),
-    const SizedBox(height: 15),
-    const InfoPanel(icon: Icons.favorite_rounded, title: 'Suas favoritas', text: 'As faixas que você curtir vão aparecer nesta área.'),
+    const SectionTitle('Sua biblioteca', subtitle: 'Favoritas, avaliações e playlists salvas neste aparelho'),
+    const SizedBox(height: 16),
+    Row(children: [
+      const Expanded(child: Text('Suas favoritas', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16))),
+      Text('${favoriteTracks.length} músicas', style: const TextStyle(color: neon, fontSize: 11)),
+    ]),
+    if (favoriteTracks.isEmpty) const Padding(
+      padding: EdgeInsets.symmetric(vertical: 12),
+      child: InfoPanel(icon: Icons.favorite_border_rounded, title: 'Ainda sem favoritas', text: 'Na aba Explorar, abra o menu de uma música e escolha Favoritar.'),
+    ),
+    for (final track in favoriteTracks) ListTile(
+      contentPadding: EdgeInsets.zero,
+      leading: const Icon(Icons.music_note_rounded, color: neon),
+      title: Text(track.title, maxLines: 1, overflow: TextOverflow.ellipsis),
+      subtitle: Text('${track.artist} • ${ratings[track.id] ?? 0}/5 estrelas', style: const TextStyle(color: muted, fontSize: 11)),
+      trailing: IconButton(icon: const Icon(Icons.favorite, color: Color(0xFFFF6D9B)), onPressed: () => onRemoveFavorite(track)),
+      onTap: () => onPlayAudius(track),
+    ),
+    const SizedBox(height: 20),
+    Row(children: [
+      const Expanded(child: Text('Minhas playlists', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16))),
+      IconButton(onPressed: onCreatePlaylist, icon: const Icon(Icons.add_circle_rounded, color: neon), tooltip: 'Criar playlist'),
+    ]),
+    if (playlists.isEmpty) const InfoPanel(icon: Icons.queue_music_rounded, title: 'Crie sua primeira playlist', text: 'Organize as músicas do seu jeito e encontre tudo aqui.'),
+    for (final playlist in playlists) Card(
+      color: panel,
+      child: ExpansionTile(
+        leading: const Icon(Icons.queue_music_rounded, color: neon),
+        title: Text(playlist.name, style: const TextStyle(fontWeight: FontWeight.bold)),
+        subtitle: Text('${playlist.trackIds.length} músicas'),
+        children: [
+          if (playlist.trackIds.isEmpty) const ListTile(title: Text('Playlist vazia', style: TextStyle(color: muted))),
+          for (final id in playlist.trackIds)
+            if (savedTracks[id] != null) ListTile(
+              dense: true,
+              title: Text(savedTracks[id]!.title, maxLines: 1, overflow: TextOverflow.ellipsis),
+              subtitle: Text(savedTracks[id]!.artist, style: const TextStyle(color: muted, fontSize: 11)),
+              leading: const Icon(Icons.music_note_rounded, color: purple),
+              trailing: IconButton(tooltip: 'Remover da playlist', icon: const Icon(Icons.remove_circle_outline_rounded, color: muted), onPressed: () => onRemoveFromPlaylist(playlist, savedTracks[id]!)),
+              onTap: () => onPlayAudius(savedTracks[id]!),
+            ),
+        ],
+      ),
+    ),
     const SizedBox(height: 18),
     const Text('Sugestões para começar', style: TextStyle(fontWeight: FontWeight.bold)),
     const SizedBox(height: 10),

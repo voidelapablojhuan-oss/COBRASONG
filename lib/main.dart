@@ -10,13 +10,25 @@ import 'package:just_audio_background/just_audio_background.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:path_provider/path_provider.dart';
 
+bool _audioBackgroundReady = false;
+
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  await JustAudioBackground.init(
-    androidNotificationChannelId: 'com.cobrasong.audio',
-    androidNotificationChannelName: 'COBRASONG • Reprodução',
-    androidNotificationOngoing: true,
-  );
+
+  // A falha ao iniciar o serviço de notificações de áudio não deve impedir
+  // que a interface principal seja aberta.
+  try {
+    await JustAudioBackground.init(
+      androidNotificationChannelId: 'com.cobrasong.audio',
+      androidNotificationChannelName: 'COBRASONG • Reprodução',
+      androidNotificationOngoing: true,
+    );
+    _audioBackgroundReady = true;
+  } catch (error, stackTrace) {
+    debugPrint('COBRASONG: serviço de áudio indisponível na inicialização: $error');
+    debugPrintStack(stackTrace: stackTrace);
+  }
+
   runApp(const CobraSongApp());
 }
 
@@ -215,7 +227,10 @@ class MainShell extends StatefulWidget {
 
 class _MainShellState extends State<MainShell> {
   int selected = 0;
+  String? _searchRequest;
+  int _searchRequestId = 0;
   bool playing = false;
+  int _repeatModeIndex = 0; // 0 = desligado, 1 = repetir fila, 2 = repetir faixa
   int currentTrack = 0;
   AudiusTrack? currentAudiusTrack;
   late final AudioPlayer audioPlayer;
@@ -442,12 +457,12 @@ class _MainShellState extends State<MainShell> {
       }
       final sources = _playQueue.map((item) => AudioSource.uri(
         Uri.file(downloadedPaths[item.id]!),
-        tag: MediaItem(
+        tag: _audioBackgroundReady ? MediaItem(
           id: item.id,
           title: item.title,
           artist: item.artist,
           artUri: item.artwork == null ? null : Uri.tryParse(item.artwork!),
-        ),
+        ) : null,
       )).toList();
       final source = sources.length == 1 ? sources.first : ConcatenatingAudioSource(children: sources);
       await audioPlayer.setAudioSource(source, initialIndex: _queueIndex);
@@ -461,6 +476,12 @@ class _MainShellState extends State<MainShell> {
   }
 
   Future<void> _removeDownload(AudiusTrack track) async {
+    if (_playQueue.any((item) => item.id == track.id)) {
+      await audioPlayer.stop();
+      _playQueue = [];
+      _queueIndex = 0;
+      if (mounted) setState(() { currentAudiusTrack = null; playing = false; });
+    }
     final path = downloadedPaths[track.id];
     if (path != null) {
       final file = File(path);
@@ -487,12 +508,12 @@ class _MainShellState extends State<MainShell> {
     try {
       final sources = _playQueue.map((item) => AudioSource.uri(
         Uri.parse(item.audioUrl ?? AudiusService().streamUrl(item.id)),
-        tag: MediaItem(
+        tag: _audioBackgroundReady ? MediaItem(
           id: item.id,
           title: item.title,
           artist: item.artist,
           artUri: item.artwork == null ? null : Uri.tryParse(item.artwork!),
-        ),
+        ) : null,
       )).toList();
       final source = sources.length == 1 ? sources.first : ConcatenatingAudioSource(children: sources);
       await audioPlayer.setAudioSource(source, initialIndex: _queueIndex);
@@ -539,6 +560,8 @@ class _MainShellState extends State<MainShell> {
     final page = [
       HomePage(onPlay: playTrack, onNavigate: (i) => setState(() => selected = i)),
       ExplorePage(
+        searchQuery: _searchRequest,
+        searchRequestId: _searchRequestId,
         onQueue: (queue) => _playQueue = queue,
         onPlay: (track) { _rememberTrack(track); playAudiusTrack(track); },
         isFavorite: (track) => favoriteIds.contains(track.id),
@@ -647,8 +670,10 @@ class _MainShellState extends State<MainShell> {
         height: 40,
         decoration: BoxDecoration(color: panel, borderRadius: BorderRadius.circular(13)),
         child: MediaQuery.sizeOf(context).width > 520
-          ? const TextField(
-              decoration: InputDecoration(
+          ? TextField(
+              textInputAction: TextInputAction.search,
+              onSubmitted: _submitSearch,
+              decoration: const InputDecoration(
                 hintText: 'Buscar músicas, artistas...',
                 hintStyle: TextStyle(color: muted, fontSize: 12),
                 prefixIcon: Icon(Icons.search_rounded, size: 19, color: muted),
@@ -678,6 +703,16 @@ class _MainShellState extends State<MainShell> {
     ]),
   );
 
+  void _submitSearch(String value) {
+    final query = value.trim();
+    if (query.isEmpty) return;
+    setState(() {
+      selected = 1;
+      _searchRequest = query;
+      _searchRequestId++;
+    });
+  }
+
   void _openSearch(BuildContext context) {
     final controller = TextEditingController();
     showDialog<void>(
@@ -691,8 +726,7 @@ class _MainShellState extends State<MainShell> {
           decoration: const InputDecoration(hintText: 'Digite o nome de uma faixa ou artista'),
           onSubmitted: (value) {
             Navigator.pop(dialogContext);
-            setState(() => selected = 1);
-            ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Explore as faixas disponíveis para: $value')));
+            _submitSearch(value);
           },
         ),
         actions: [
@@ -700,18 +734,32 @@ class _MainShellState extends State<MainShell> {
           FilledButton(onPressed: () {
             final value = controller.text.trim();
             Navigator.pop(dialogContext);
-            setState(() => selected = 1);
-            if (value.isNotEmpty) {
-              ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Explore as faixas disponíveis para: $value')));
-            }
+            _submitSearch(value);
           }, child: const Text('Buscar')),
         ],
       ),
-    );
+    ).then((_) => controller.dispose());
+  }
+
+  Future<void> _cycleRepeatMode() async {
+    final next = (_repeatModeIndex + 1) % 3;
+    final mode = switch (next) {
+      1 => LoopMode.all,
+      2 => LoopMode.one,
+      _ => LoopMode.off,
+    };
+    await audioPlayer.setLoopMode(mode);
+    if (mounted) setState(() => _repeatModeIndex = next);
   }
 
   Future<void> _skipNext() async {
-    if (_playQueue.isEmpty || _queueIndex >= _playQueue.length - 1) return;
+    if (_playQueue.isEmpty) return;
+    if (_queueIndex >= _playQueue.length - 1) {
+      if (_repeatModeIndex == 1 && _playQueue.length > 1) {
+        await audioPlayer.seek(Duration.zero, index: 0);
+      }
+      return;
+    }
     await audioPlayer.seek(Duration.zero, index: _queueIndex + 1);
   }
 
@@ -738,6 +786,18 @@ class _MainShellState extends State<MainShell> {
         Text(title, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 12)),
         Text(artist, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(color: muted, fontSize: 10)),
       ])),
+      IconButton(
+        tooltip: _repeatModeIndex == 0
+            ? 'Repetição desligada'
+            : _repeatModeIndex == 1
+                ? 'Repetir playlist'
+                : 'Repetir música',
+        onPressed: _cycleRepeatMode,
+        icon: Icon(
+          _repeatModeIndex == 2 ? Icons.repeat_one_rounded : Icons.repeat_rounded,
+          color: _repeatModeIndex == 0 ? muted : neon,
+        ),
+      ),
       IconButton(
         onPressed: () async {
           if (currentAudiusTrack != null) {
@@ -848,11 +908,13 @@ class HomePage extends StatelessWidget {
 class ExplorePage extends StatefulWidget {
   final ValueChanged<AudiusTrack> onPlay;
   final ValueChanged<List<AudiusTrack>> onQueue;
+  final String? searchQuery;
+  final int searchRequestId;
   final bool Function(AudiusTrack) isFavorite;
   final int Function(AudiusTrack) ratingFor;
   final ValueChanged<AudiusTrack> onFavorite, onRate, onAddToPlaylist, onDownload;
   final bool Function(AudiusTrack) isDownloading;
-  const ExplorePage({super.key, required this.onPlay, required this.onQueue, required this.isFavorite, required this.ratingFor, required this.onFavorite, required this.onRate, required this.onAddToPlaylist, required this.onDownload, required this.isDownloading});
+  const ExplorePage({super.key, required this.onPlay, required this.onQueue, this.searchQuery, this.searchRequestId = 0, required this.isFavorite, required this.ratingFor, required this.onFavorite, required this.onRate, required this.onAddToPlaylist, required this.onDownload, required this.isDownloading});
 
   @override
   State<ExplorePage> createState() => _ExplorePageState();
@@ -891,7 +953,23 @@ class _ExplorePageState extends State<ExplorePage> {
   @override
   void initState() {
     super.initState();
-    _loadTrending();
+    final initialQuery = widget.searchQuery?.trim() ?? '';
+    if (initialQuery.isNotEmpty) {
+      controller.text = initialQuery;
+      _search();
+    } else {
+      _loadTrending();
+    }
+  }
+
+  @override
+  void didUpdateWidget(covariant ExplorePage oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (widget.searchRequestId != oldWidget.searchRequestId) {
+      controller.text = widget.searchQuery ?? '';
+      selectedGenre = 'Todos';
+      _search();
+    }
   }
 
   Future<void> _loadTrending() async {
@@ -1237,7 +1315,7 @@ class _GuessSongGameState extends State<GuessSongGame> {
     try {
       await widget.player.setAudioSource(AudioSource.uri(
         Uri.parse(widget.service.streamUrl(correct.id)),
-        tag: MediaItem(id: 'quiz-\${correct.id}', title: 'Adivinhe a música', artist: 'COBRASONG'),
+        tag: _audioBackgroundReady ? MediaItem(id: 'quiz-\${correct.id}', title: 'Adivinhe a música', artist: 'COBRASONG') : null,
       ));
       unawaited(widget.player.play());
       _cutTimer = Timer(const Duration(seconds: _clipSeconds), () => unawaited(widget.player.pause()));

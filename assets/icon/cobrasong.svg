@@ -1,0 +1,53 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+<defs>
+  <radialGradient id="bg" cx="50%" cy="42%" r="72%"><stop offset="0" stop-color="#241044"/><stop offset=".58" stop-color="#10091f"/><stop offset="1" stop-color="#05040a"/></radialGradient>
+  <linearGradient id="purple" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#d9a7ff"/><stop offset=".35" stop-color="#8c35e8"/><stop offset="1" stop-color="#35105f"/></linearGradient>
+  <linearGradient id="scale" x1="0" y1="0" x2="0.9" y2="1"><stop stop-color="#4a315e"/><stop offset=".45" stop-color="#17121f"/><stop offset="1" stop-color="#07060b"/></linearGradient>
+  <linearGradient id="key" x1="0" y1="0" x2="0" y2="1"><stop stop-color="#ffffff"/><stop offset="1" stop-color="#b9a9cb"/></linearGradient>
+  <filter id="glow" x="-60%" y="-60%" width="220%" height="220%"><feGaussianBlur stdDeviation="18" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter>
+  <filter id="soft" x="-30%" y="-30%" width="160%" height="160%"><feGaussianBlur stdDeviation="7"/></filter>
+</defs>
+<rect width="1024" height="1024" rx="210" fill="url(#bg)"/>
+<circle cx="512" cy="480" r="370" fill="none" stroke="#8e35e8" stroke-opacity=".25" stroke-width="24" filter="url(#soft)"/>
+<circle cx="512" cy="480" r="370" fill="none" stroke="#a855f7" stroke-opacity=".55" stroke-width="7"/>
+<g fill="#b86aff" filter="url(#glow)" opacity=".9">
+  <path d="M155 310v-95h22v74l56-18v-95h22v140l-22 7v-29l-78 25z"/>
+  <path d="M775 280v-95h22v74l56-18v-95h22v140l-22 7v-29l-78 25z"/>
+</g>
+<!-- Coiled body -->
+<path d="M220 700 C105 585 190 475 325 500 C445 520 420 705 555 735 C695 765 865 675 815 545" fill="none" stroke="#130b20" stroke-width="126" stroke-linecap="round"/>
+<path d="M220 700 C105 585 190 475 325 500 C445 520 420 705 555 735 C695 765 865 675 815 545" fill="none" stroke="url(#purple)" stroke-width="96" stroke-linecap="round"/>
+<path d="M220 700 C105 585 190 475 325 500 C445 520 420 705 555 735 C695 765 865 675 815 545" fill="none" stroke="#17101f" stroke-width="68" stroke-linecap="round"/>
+<path d="M210 685 C120 590 205 500 320 520 M565 720 C700 742 835 655 800 555" fill="none" stroke="#d49aff" stroke-opacity=".7" stroke-width="9" stroke-linecap="round"/>
+<!-- Cobra hood -->
+<path d="M292 525 C270 420 302 270 410 205 C475 165 550 165 614 205 C722 270 754 420 732 525 C675 482 600 455 512 455 C424 455 349 482 292 525Z" fill="url(#scale)" stroke="url(#purple)" stroke-width="24"/>
+<path d="M340 480 C335 380 372 290 448 245 M684 480 C689 380 652 290 576 245" fill="none" stroke="#a855f7" stroke-opacity=".6" stroke-width="12" stroke-linecap="round"/>
+<path d="M390 470 C400 355 445 300 512 292 C579 300 624 355 634 470" fill="none" stroke="#6f35a4" stroke-width="9" stroke-opacity=".65"/>
+<!-- Head -->
+<path d="M365 390 Q512 320 659 390 L625 535 Q512 615 399 535Z" fill="#0a0810" stroke="#6f35a4" stroke-width="18"/>
+<path d="M390 408 Q450 370 500 390 L482 445 Q435 458 397 440Z" fill="#241431"/>
+<path d="M634 408 Q574 370 524 390 L542 445 Q589 458 627 440Z" fill="#241431"/>
+<!-- Green eyes -->
+<path d="M407 423 Q455 392 493 418 Q462 454 420 447Z" fill="#79ff38" filter="url(#glow)"/>
+<path d="M617 423 Q569 392 531 418 Q562 454 604 447Z" fill="#79ff38" filter="url(#glow)"/>
+<ellipse cx="452" cy="426" rx="7" ry="19" fill="#071006"/><ellipse cx="572" cy="426" rx="7" ry="19" fill="#071006"/>
+<!-- Nose and mouth -->
+<path d="M490 477 Q512 490 534 477" fill="none" stroke="#a855f7" stroke-width="8" stroke-linecap="round"/>
+<path d="M430 500 Q512 555 594 500 Q579 585 512 590 Q445 585 430 500Z" fill="#08050d" stroke="#5c258d" stroke-width="10"/>
+<path d="M450 500 L466 555 Q475 567 483 552 L474 505Z M574 500 L558 555 Q549 567 541 552 L550 505Z" fill="#f5efff"/>
+<path d="M512 578 C490 620 520 626 540 647 C548 625 535 607 512 578Z" fill="#a855f7" stroke="#e0b7ff" stroke-width="5"/>
+<!-- Piano keyboard -->
+<rect x="215" y="815" width="594" height="125" rx="20" fill="#10091a" stroke="#b86aff" stroke-width="12" filter="url(#glow)"/>
+<g fill="url(#key)" stroke="#2b183c" stroke-width="5">
+  <rect x="235" y="830" width="76" height="94" rx="5"/><rect x="311" y="830" width="76" height="94" rx="5"/>
+  <rect x="387" y="830" width="76" height="94" rx="5"/><rect x="463" y="830" width="76" height="94" rx="5"/>
+  <rect x="539" y="830" width="76" height="94" rx="5"/><rect x="615" y="830" width="76" height="94" rx="5"/>
+  <rect x="691" y="830" width="98" height="94" rx="5"/>
+</g>
+<g fill="#10091a">
+  <rect x="292" y="830" width="37" height="58" rx="4"/><rect x="368" y="830" width="37" height="58" rx="4"/>
+  <rect x="520" y="830" width="37" height="58" rx="4"/><rect x="596" y="830" width="37" height="58" rx="4"/>
+  <rect x="672" y="830" width="37" height="58" rx="4"/>
+</g>
+<path d="M175 965 H849" stroke="#8e35e8" stroke-opacity=".7" stroke-width="8" stroke-linecap="round"/>
+</svg>

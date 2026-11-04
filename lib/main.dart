@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'dart:math';
 
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
@@ -466,6 +467,33 @@ class _MainShellState extends State<MainShell> {
     }
   }
 
+
+  Future<void> _openGuessSong() async {
+    await audioPlayer.stop();
+    if (!mounted) return;
+    setState(() {
+      currentAudiusTrack = null;
+      playing = false;
+    });
+    await Navigator.of(context).push<void>(MaterialPageRoute<void>(
+      builder: (_) => GuessSongGame(player: audioPlayer, service: AudiusService()),
+    ));
+    if (!mounted) return;
+    await audioPlayer.stop();
+    setState(() {
+      currentAudiusTrack = null;
+      playing = false;
+    });
+  }
+
+  Future<void> _openMemoryGame() async {
+    await audioPlayer.pause();
+    if (!mounted) return;
+    await Navigator.of(context).push<void>(
+      MaterialPageRoute<void>(builder: (_) => const MemoryGame()),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final wide = MediaQuery.sizeOf(context).width >= 850;
@@ -483,7 +511,7 @@ class _MainShellState extends State<MainShell> {
         isDownloading: (track) => downloadingIds.contains(track.id),
       ),
       const RoomsPage(),
-      const GamesPage(),
+      GamesPage(onGuessSong: _openGuessSong, onMemoryGame: _openMemoryGame),
       LibraryPage(
         onPlay: playTrack,
         favoriteTracks: favoriteIds.map((id) => savedTracks[id]).whereType<AudiusTrack>().toList(),
@@ -1068,21 +1096,317 @@ void _showFeatureNotice(BuildContext context, String feature) {
   );
 }
 
+
 class GamesPage extends StatelessWidget {
-  const GamesPage({super.key});
+  const GamesPage({super.key, required this.onGuessSong, required this.onMemoryGame});
+  final VoidCallback onGuessSong;
+  final VoidCallback onMemoryGame;
+
   @override
   Widget build(BuildContext context) => ListView(padding: const EdgeInsets.all(22), children: [
     const SectionTitle('Arena COBRA', subtitle: 'Mini games para competir com a galera'),
     const SizedBox(height: 15),
-    FeatureTile(icon: Icons.quiz_rounded, title: 'Adivinhe a música', detail: 'Descubra pelo trecho', color: purple, tall: true, onTap: () => _showFeatureNotice(context, 'Adivinhe a música')),
+    FeatureTile(icon: Icons.quiz_rounded, title: 'Adivinhe a música', detail: 'Descubra pelo trecho de áudio', color: purple, tall: true, onTap: onGuessSong),
+    const SizedBox(height: 10),
+    FeatureTile(icon: Icons.memory_rounded, title: 'Jogo da memória', detail: 'Encontre os pares musicais', color: const Color(0xFF51D9C2), tall: true, onTap: onMemoryGame),
     const SizedBox(height: 10),
     FeatureTile(icon: Icons.bolt_rounded, title: 'Batalha musical', detail: 'Escolha a melhor vibe', color: neon, tall: true, onTap: () => _showFeatureNotice(context, 'Batalha musical')),
     const SizedBox(height: 10),
     FeatureTile(icon: Icons.music_note_rounded, title: 'Desafio de ritmo', detail: 'Entre no compasso', color: const Color(0xFF51D9C2), tall: true, onTap: () => _showFeatureNotice(context, 'Desafio de ritmo')),
     const SizedBox(height: 14),
-    const InfoPanel(icon: Icons.emoji_events_rounded, title: 'XP, níveis e conquistas', text: 'Sistema de pontuação e ranking será conectado aos jogos nas próximas versões.'),
+    const InfoPanel(icon: Icons.emoji_events_rounded, title: 'XP, níveis e conquistas', text: 'Os dois primeiros jogos já podem ser jogados. XP e ranking ficam para uma próxima etapa.'),
   ]);
 }
+
+class GuessSongGame extends StatefulWidget {
+  const GuessSongGame({super.key, required this.player, required this.service});
+  final AudioPlayer player;
+  final AudiusService service;
+
+  @override
+  State<GuessSongGame> createState() => _GuessSongGameState();
+}
+
+class _GuessSongGameState extends State<GuessSongGame> {
+  static const int _roundCount = 5;
+  static const int _clipSeconds = 10;
+  final Random _random = Random();
+  final List<AudiusTrack> _pool = [];
+  List<AudiusTrack> _rounds = [];
+  List<AudiusTrack> _options = [];
+  int _round = 0;
+  int _score = 0;
+  bool _loading = true;
+  bool _answered = false;
+  bool _audioFailed = false;
+  String? _error;
+  AudiusTrack? _picked;
+  Timer? _cutTimer;
+
+  bool get _finished => !_loading && _error == null && _round >= _rounds.length;
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  @override
+  void dispose() {
+    _cutTimer?.cancel();
+    unawaited(widget.player.stop());
+    super.dispose();
+  }
+
+  Future<void> _load() async {
+    setState(() {
+      _loading = true;
+      _error = null;
+      _round = 0;
+      _score = 0;
+    });
+    try {
+      final found = await widget.service.trending();
+      if (found.length < 4) throw Exception('Poucas faixas disponíveis');
+      _pool
+        ..clear()
+        ..addAll(found);
+      _pool.shuffle(_random);
+      _rounds = _pool.take(min(_roundCount, _pool.length)).toList();
+      await _startRound();
+    } catch (_) {
+      _error = 'Não consegui carregar músicas para o jogo. Confira a internet e tente novamente.';
+    }
+    if (mounted) setState(() => _loading = false);
+  }
+
+  Future<void> _startRound() async {
+    if (_round >= _rounds.length) return;
+    final correct = _rounds[_round];
+    final others = _pool.where((track) => track.id != correct.id).toList()..shuffle(_random);
+    _options = [correct, ...others.take(3)]..shuffle(_random);
+    _answered = false;
+    _picked = null;
+    _audioFailed = false;
+    _cutTimer?.cancel();
+    try {
+      await widget.player.setAudioSource(AudioSource.uri(
+        Uri.parse(widget.service.streamUrl(correct.id)),
+        tag: MediaItem(id: 'quiz-\${correct.id}', title: 'Adivinhe a música', artist: 'COBRASONG'),
+      ));
+      unawaited(widget.player.play());
+      _cutTimer = Timer(const Duration(seconds: _clipSeconds), () => unawaited(widget.player.pause()));
+    } catch (_) {
+      _audioFailed = true;
+    }
+    if (mounted) setState(() {});
+  }
+
+  Future<void> _replay() async {
+    _cutTimer?.cancel();
+    try {
+      await widget.player.seek(Duration.zero);
+      unawaited(widget.player.play());
+      _cutTimer = Timer(const Duration(seconds: _clipSeconds), () => unawaited(widget.player.pause()));
+    } catch (_) {
+      if (mounted) setState(() => _audioFailed = true);
+    }
+  }
+
+  void _answer(AudiusTrack track) {
+    if (_answered) return;
+    _cutTimer?.cancel();
+    unawaited(widget.player.pause());
+    setState(() {
+      _answered = true;
+      _picked = track;
+      if (track.id == _rounds[_round].id) _score++;
+    });
+  }
+
+  Future<void> _next() async {
+    setState(() => _round++);
+    if (_round < _rounds.length) {
+      await _startRound();
+    } else {
+      await widget.player.stop();
+    }
+  }
+
+  Color _optionColor(AudiusTrack track) {
+    if (!_answered) return panel;
+    if (track.id == _rounds[_round].id) return neon.withValues(alpha: .24);
+    if (track.id == _picked?.id) return Colors.redAccent.withValues(alpha: .24);
+    return panel;
+  }
+
+  @override
+  Widget build(BuildContext context) => Scaffold(
+    backgroundColor: bg,
+    appBar: AppBar(backgroundColor: bg, foregroundColor: Colors.white, title: const Text('Adivinhe a Música')),
+    body: Padding(padding: const EdgeInsets.all(18), child: _body()),
+  );
+
+  Widget _body() {
+    if (_loading) return const Center(child: CircularProgressIndicator(color: neon));
+    if (_error != null) {
+      return Center(child: Column(mainAxisSize: MainAxisSize.min, children: [
+        Text(_error!, textAlign: TextAlign.center, style: const TextStyle(color: muted)),
+        const SizedBox(height: 14),
+        FilledButton(onPressed: _load, child: const Text('Tentar novamente')),
+      ]));
+    }
+    if (_finished) {
+      return Center(child: Column(mainAxisSize: MainAxisSize.min, children: [
+        const Icon(Icons.emoji_events_rounded, color: neon, size: 64),
+        const SizedBox(height: 12),
+        Text('Você acertou $_score de \${_rounds.length}!', style: const TextStyle(color: neon, fontSize: 23, fontWeight: FontWeight.w900)),
+        const SizedBox(height: 18),
+        FilledButton(onPressed: _load, child: const Text('Jogar novamente')),
+      ]));
+    }
+    final correct = _rounds[_round];
+    return Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+      Text('Rodada \${_round + 1} de \${_rounds.length}  •  Pontos: $_score', textAlign: TextAlign.center, style: const TextStyle(color: muted)),
+      const SizedBox(height: 18),
+      Container(
+        padding: const EdgeInsets.all(20),
+        decoration: BoxDecoration(color: panel, borderRadius: BorderRadius.circular(20), border: Border.all(color: purple.withValues(alpha: .35))),
+        child: Column(children: [
+          const Icon(Icons.headphones_rounded, color: neon, size: 58),
+          const SizedBox(height: 8),
+          Text(_audioFailed ? 'Não foi possível tocar o trecho.' : 'Ouça o trecho e escolha a faixa correta.', textAlign: TextAlign.center, style: const TextStyle(fontWeight: FontWeight.w700)),
+          const SizedBox(height: 10),
+          OutlinedButton.icon(onPressed: _replay, icon: const Icon(Icons.replay_rounded), label: const Text('Ouvir novamente')),
+          const Text('O trecho toca por até 10 segundos.', style: TextStyle(color: muted, fontSize: 11)),
+        ]),
+      ),
+      const SizedBox(height: 18),
+      for (final track in _options)
+        Padding(
+          padding: const EdgeInsets.only(bottom: 9),
+          child: Material(
+            color: _optionColor(track),
+            borderRadius: BorderRadius.circular(13),
+            child: InkWell(
+              borderRadius: BorderRadius.circular(13),
+              onTap: _answered ? null : () => _answer(track),
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 15),
+                child: Row(children: [
+                  Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                    Text(track.title, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontWeight: FontWeight.bold)),
+                    Text(track.artist, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(color: muted, fontSize: 11)),
+                  ])),
+                  if (_answered && track.id == correct.id) const Icon(Icons.check_circle_rounded, color: neon),
+                  if (_answered && track.id == _picked?.id && track.id != correct.id) const Icon(Icons.cancel_rounded, color: Colors.redAccent),
+                ]),
+              ),
+            ),
+          ),
+        ),
+      const Spacer(),
+      if (_answered) FilledButton(onPressed: _next, child: Text(_round + 1 == _rounds.length ? 'Ver resultado' : 'Próxima rodada')),
+    ]);
+  }
+}
+
+class MemoryGame extends StatefulWidget {
+  const MemoryGame({super.key});
+  @override
+  State<MemoryGame> createState() => _MemoryGameState();
+}
+
+class _MemoryGameState extends State<MemoryGame> {
+  static const List<String> _symbols = ['🐍', '🎵', '🎧', '🎸', '🥁', '🎹', '🎤', '🎺'];
+  late List<String> _cards;
+  late List<bool> _revealed;
+  late List<bool> _matched;
+  int? _first;
+  bool _busy = false;
+  int _moves = 0;
+
+  @override
+  void initState() {
+    super.initState();
+    _newGame();
+  }
+
+  void _newGame() {
+    _cards = [..._symbols, ..._symbols]..shuffle(Random());
+    _revealed = List<bool>.filled(_cards.length, false);
+    _matched = List<bool>.filled(_cards.length, false);
+    _first = null;
+    _busy = false;
+    _moves = 0;
+  }
+
+  bool get _won => _matched.every((matched) => matched);
+
+  Future<void> _tap(int index) async {
+    if (_busy || _revealed[index] || _matched[index]) return;
+    setState(() => _revealed[index] = true);
+    if (_first == null) {
+      _first = index;
+      return;
+    }
+    final first = _first!;
+    _first = null;
+    if (_cards[first] == _cards[index]) {
+      setState(() {
+        _matched[first] = true;
+        _matched[index] = true;
+        _moves++;
+      });
+    } else {
+      _busy = true;
+      await Future.delayed(const Duration(milliseconds: 750));
+      if (!mounted) return;
+      setState(() {
+        _revealed[first] = false;
+        _revealed[index] = false;
+        _moves++;
+        _busy = false;
+      });
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) => Scaffold(
+    backgroundColor: bg,
+    appBar: AppBar(backgroundColor: bg, foregroundColor: Colors.white, title: const Text('Jogo da Memória')),
+    body: Padding(
+      padding: const EdgeInsets.all(16),
+      child: Column(children: [
+        Text(_won ? 'Você venceu em $_moves jogadas!' : 'Jogadas: $_moves', style: const TextStyle(color: neon, fontSize: 20, fontWeight: FontWeight.bold)),
+        const SizedBox(height: 16),
+        Expanded(child: GridView.builder(
+          itemCount: _cards.length,
+          gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(crossAxisCount: 4, mainAxisSpacing: 9, crossAxisSpacing: 9),
+          itemBuilder: (context, index) {
+            final show = _revealed[index] || _matched[index];
+            return GestureDetector(
+              onTap: () => _tap(index),
+              child: AnimatedContainer(
+                duration: const Duration(milliseconds: 180),
+                decoration: BoxDecoration(
+                  color: _matched[index] ? neon.withValues(alpha: .22) : (show ? panel : purple),
+                  borderRadius: BorderRadius.circular(13),
+                  border: Border.all(color: _matched[index] ? neon : purple, width: 2),
+                ),
+                alignment: Alignment.center,
+                child: Text(show ? _cards[index] : '?', style: const TextStyle(fontSize: 30)),
+              ),
+            );
+          },
+        )),
+        const SizedBox(height: 12),
+        FilledButton.icon(onPressed: () => setState(_newGame), icon: const Icon(Icons.refresh_rounded), label: const Text('Novo jogo')),
+      ]),
+    ),
+  );
+}
+
 
 class LibraryPage extends StatelessWidget {
   final ValueChanged<int> onPlay;

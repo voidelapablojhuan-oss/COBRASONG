@@ -12,11 +12,20 @@ import 'package:path_provider/path_provider.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  await JustAudioBackground.init(
-    androidNotificationChannelId: 'com.cobrasong.audio',
-    androidNotificationChannelName: 'COBRASONG • Reprodução',
-    androidNotificationOngoing: true,
-  );
+
+  // A falha ao iniciar o serviço de notificações de áudio não deve impedir
+  // que a interface principal seja aberta.
+  try {
+    await JustAudioBackground.init(
+      androidNotificationChannelId: 'com.cobrasong.audio',
+      androidNotificationChannelName: 'COBRASONG • Reprodução',
+      androidNotificationOngoing: true,
+    ).timeout(const Duration(seconds: 8));
+  } catch (error, stackTrace) {
+    debugPrint('COBRASONG: serviço de áudio indisponível na inicialização: $error');
+    debugPrintStack(stackTrace: stackTrace);
+  }
+
   runApp(const CobraSongApp());
 }
 

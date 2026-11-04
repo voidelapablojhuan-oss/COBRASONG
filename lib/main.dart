@@ -79,10 +79,11 @@ class AudiusTrack {
 class AudiusService {
   static const _base = 'https://api.audius.co/v1';
 
-  Future<List<AudiusTrack>> search(String query) async {
+  Future<List<AudiusTrack>> search(String query, {int offset = 0}) async {
     final uri = Uri.parse('$_base/tracks/search').replace(queryParameters: {
       'query': query,
       'limit': '20',
+      'offset': '$offset',
       'app_name': 'COBRASONG',
     });
     final response = await http.get(uri).timeout(const Duration(seconds: 20));
@@ -434,6 +435,9 @@ class _ExplorePageState extends State<ExplorePage> {
   final service = AudiusService();
   List<AudiusTrack> results = [];
   bool loading = false;
+  bool loadingMore = false;
+  bool hasMore = true;
+  int offset = 0;
   String? error;
   bool searched = false;
 
@@ -448,18 +452,50 @@ class _ExplorePageState extends State<ExplorePage> {
     if (query.isEmpty) return;
     setState(() {
       loading = true;
+      loadingMore = false;
+      hasMore = true;
+      offset = 0;
       error = null;
       searched = true;
+      results = [];
     });
     try {
       final found = await service.search(query);
       if (!mounted) return;
-      setState(() => results = found);
+      setState(() {
+        results = found;
+        offset = found.length;
+        hasMore = found.length == 20;
+      });
     } catch (_) {
       if (!mounted) return;
       setState(() => error = 'Não consegui carregar o catálogo. Confira sua internet e tente novamente.');
     } finally {
       if (mounted) setState(() => loading = false);
+    }
+  }
+
+  Future<void> _loadMore() async {
+    if (loading || loadingMore || !hasMore || controller.text.trim().isEmpty) return;
+    setState(() {
+      loadingMore = true;
+      error = null;
+    });
+    try {
+      final found = await service.search(controller.text.trim(), offset: offset);
+      if (!mounted) return;
+      final knownIds = results.map((track) => track.id).toSet();
+      final newTracks = found.where((track) => !knownIds.contains(track.id)).toList();
+      setState(() {
+        results = [...results, ...newTracks];
+        offset += found.length;
+        hasMore = found.length == 20 && newTracks.isNotEmpty;
+      });
+    } catch (_) {
+      if (!mounted) return;
+      setState(() => error = 'Não consegui carregar mais músicas. Tente novamente.');
+    } finally {
+      if (mounted) setState(() => loadingMore = false);
     }
   }
 
@@ -523,6 +559,24 @@ class _ExplorePageState extends State<ExplorePage> {
             icon: const Icon(Icons.play_circle_fill_rounded, color: neon, size: 30),
           ),
           onTap: () => widget.onPlay(track),
+        ),
+      if (results.isNotEmpty && hasMore)
+        Padding(
+          padding: const EdgeInsets.symmetric(vertical: 12),
+          child: Center(
+            child: OutlinedButton.icon(
+              onPressed: loadingMore ? null : _loadMore,
+              icon: loadingMore
+                  ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2))
+                  : const Icon(Icons.expand_more_rounded),
+              label: Text(loadingMore ? 'Carregando...' : 'Carregar mais músicas'),
+            ),
+          ),
+        ),
+      if (results.isNotEmpty && !hasMore)
+        const Padding(
+          padding: EdgeInsets.symmetric(vertical: 12),
+          child: Center(child: Text('Você chegou ao fim destes resultados.', style: TextStyle(color: muted, fontSize: 11))),
         ),
       const SizedBox(height: 12),
       const Text('As faixas e seus direitos pertencem aos respectivos criadores. A reprodução usa o serviço Audius.', style: TextStyle(color: muted, fontSize: 10)),

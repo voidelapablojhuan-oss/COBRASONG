@@ -20,7 +20,6 @@ Future<void> main() async {
     androidNotificationChannelName: 'COBRASONG • Reprodução',
     androidNotificationOngoing: true,
   );
-  sharedAudioPlayer;
   runApp(const CobraSongApp());
 }
 

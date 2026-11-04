@@ -16,6 +16,8 @@ jobs:
           channel: stable
       - name: Generate platform folders
         run: flutter create . --platforms=android,ios,web,windows
+      - name: Restore COBRASONG launcher icon
+        run: cp -R branding/android-res/. android/app/src/main/res/
       - name: Install dependencies
         run: flutter pub get
       - name: Analyze

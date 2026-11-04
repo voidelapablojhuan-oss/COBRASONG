@@ -1,7 +1,7 @@
 name: cobrasong
 description: COBRASONG - música, comunidade e jogos em um só lugar.
 publish_to: "none"
-version: 0.8.0+8
+version: 0.9.0+9
 
 environment:
   sdk: ">=3.3.0 <4.0.0"
@@ -11,6 +11,8 @@ dependencies:
     sdk: flutter
   http: ^1.5.0
   just_audio: ^0.9.46
+  just_audio_background: ^0.0.1-beta.17
+  audio_service: ^0.18.18
   shared_preferences: ^2.5.3
   path_provider: ^2.1.5
 

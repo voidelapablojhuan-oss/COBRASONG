@@ -68,6 +68,7 @@ class AudiusTrack {
   final String? artwork;
   final int duration;
   final bool downloadable;
+  final bool isStreamable;
 
   const AudiusTrack({
     required this.id,
@@ -76,12 +77,13 @@ class AudiusTrack {
     this.artwork,
     required this.duration,
     this.downloadable = false,
+    this.isStreamable = true,
   });
 
   Map<String, dynamic> toJson() => {
     'id': id, 'title': title, 'user': {'name': artist},
     'artwork': {'150x150': artwork}, 'duration': duration,
-    'downloadable': downloadable,
+    'downloadable': downloadable, 'isStreamable': isStreamable,
   };
 
   factory AudiusTrack.fromJson(Map<String, dynamic> json) {
@@ -94,23 +96,40 @@ class AudiusTrack {
       artwork: artworkData['150x150']?.toString() ?? artworkData['1000x1000']?.toString(),
       duration: (json['duration'] as num?)?.toInt() ?? 0,
       downloadable: json['downloadable'] == true,
+      isStreamable: json['isStreamable'] != false && json['is_streamable'] != false,
     );
   }
 }
 
 class AudiusService {
-  static const _base = 'https://api.audius.co/v1';
+  static const _bases = [
+    'https://api.audius.co/v1',
+    'https://discoveryprovider.audius.co/v1',
+  ];
 
   Future<List<AudiusTrack>> search(String query, {int offset = 0}) async {
-    final uri = Uri.parse('$_base/tracks/search').replace(queryParameters: {
-      'query': query,
-      'limit': '20',
-      'offset': '$offset',
-      'app_name': 'COBRASONG',
-    });
-    final response = await http.get(uri).timeout(const Duration(seconds: 20));
-    if (response.statusCode != 200) {
-      throw Exception('O catálogo respondeu com status ${response.statusCode}.');
+    http.Response? response;
+    Object? lastError;
+    for (final base in _bases) {
+      try {
+        final uri = Uri.parse('$base/tracks/search').replace(queryParameters: {
+          'query': query,
+          'limit': '20',
+          'offset': '$offset',
+          'app_name': 'COBRASONG',
+        });
+        final candidate = await http.get(uri).timeout(const Duration(seconds: 20));
+        if (candidate.statusCode == 200) {
+          response = candidate;
+          break;
+        }
+        lastError = Exception('Catálogo respondeu com status ${candidate.statusCode}.');
+      } catch (error) {
+        lastError = error;
+      }
+    }
+    if (response == null) {
+      throw Exception('Não foi possível acessar o catálogo. ${lastError ?? 'Tente novamente.'}');
     }
     final decoded = jsonDecode(response.body) as Map<String, dynamic>;
     final data = decoded['data'];
@@ -118,15 +137,16 @@ class AudiusService {
     return data
         .whereType<Map>()
         .map((item) => AudiusTrack.fromJson(Map<String, dynamic>.from(item)))
-        .where((track) => track.id.isNotEmpty)
+        .where((track) => track.id.isNotEmpty && track.isStreamable)
         .toList();
   }
 
+  // Use a Discovery Provider for stream resolution instead of relying on one API gateway.
   String streamUrl(String trackId) =>
-      '$_base/tracks/${Uri.encodeComponent(trackId)}/stream?app_name=COBRASONG';
+      'https://discoveryprovider.audius.co/v1/tracks/${Uri.encodeComponent(trackId)}/stream?app_name=COBRASONG';
 
   String downloadUrl(String trackId) =>
-      '$_base/tracks/${Uri.encodeComponent(trackId)}/download?app_name=COBRASONG';
+      'https://api.audius.co/v1/tracks/${Uri.encodeComponent(trackId)}/download?app_name=COBRASONG';
 }
 
 class MusicPlaylist {

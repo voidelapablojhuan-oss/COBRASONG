@@ -673,6 +673,25 @@ class ExplorePage extends StatefulWidget {
 class _ExplorePageState extends State<ExplorePage> {
   final controller = TextEditingController();
   final service = AudiusService();
+  String selectedGenre = 'Todos';
+  static const Map<String, String> genres = {
+    'Todos': 'music', 'Funk': 'Brazilian funk', 'Trap': 'trap',
+    'Phonk': 'phonk', 'Rap / Hip-hop': 'hip hop rap', 'Pop': 'pop music',
+    'Eletrônica': 'electronic dance music', 'Rock': 'rock music',
+    'Sertanejo': 'sertanejo', 'Gospel': 'gospel', 'Lo-fi': 'lofi beats',
+    'K-pop': 'k-pop', 'Reggae': 'reggae', 'Jazz': 'jazz',
+    'Clássica': 'classical music', 'Forró': 'forro', 'Pagode': 'pagode',
+    'MPB': 'musica popular brasileira', 'Indie': 'indie music',
+    'Metal': 'metal', 'Samba': 'samba', 'Dance': 'dance music',
+  };
+
+  Future<void> _searchGenre(String label, String query) async {
+    setState(() {
+      selectedGenre = label;
+      controller.text = query;
+    });
+    await _search();
+  }
   List<AudiusTrack> results = [];
   bool loading = false;
   bool loadingMore = false;
@@ -749,7 +768,7 @@ class _ExplorePageState extends State<ExplorePage> {
   Widget build(BuildContext context) => ListView(
     padding: const EdgeInsets.all(22),
     children: [
-      const SectionTitle('Explore músicas', subtitle: 'Busque faixas reais no catálogo aberto do Audius'),
+      const SectionTitle('Explore músicas', subtitle: 'Busque artistas ou descubra vários estilos no catálogo aberto do Audius'),
       const SizedBox(height: 14),
       Row(children: [
         Expanded(child: TextField(
@@ -771,6 +790,24 @@ class _ExplorePageState extends State<ExplorePage> {
           child: const Icon(Icons.search_rounded),
         ),
       ]),
+      const SizedBox(height: 16),
+      const Text('Explore por estilo', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14)),
+      const SizedBox(height: 9),
+      Wrap(
+        spacing: 7, runSpacing: 7,
+        children: [
+          for (final genre in genres.entries)
+            ChoiceChip(
+              label: Text(genre.key),
+              selected: selectedGenre == genre.key,
+              onSelected: loading ? null : (_) => _searchGenre(genre.key, genre.value),
+              selectedColor: purple.withValues(alpha: .32),
+              backgroundColor: panel,
+              side: BorderSide(color: selectedGenre == genre.key ? purple : Colors.white10),
+              labelStyle: TextStyle(color: selectedGenre == genre.key ? Colors.white : muted, fontSize: 11),
+            ),
+        ],
+      ),
       const SizedBox(height: 18),
       if (loading) const Center(child: Padding(
         padding: EdgeInsets.all(24),

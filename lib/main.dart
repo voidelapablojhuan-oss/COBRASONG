@@ -4,7 +4,6 @@ import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
-import 'package:audio_service/audio_service.dart';
 import 'package:just_audio/just_audio.dart';
 import 'package:just_audio_background/just_audio_background.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -659,6 +658,13 @@ class _MainShellState extends State<MainShell> {
           if (mounted) setState(() => playing = !playing);
         },
         icon: Icon(playing ? Icons.pause_circle_filled_rounded : Icons.play_circle_fill_rounded, color: neon, size: 34),
+      ),
+      IconButton(
+        tooltip: 'Música anterior',
+        onPressed: currentAudiusTrack == null
+            ? () { audioPlayer.stop(); setState(() { currentTrack = (currentTrack - 1 + tracks.length) % tracks.length; playing = true; }); }
+            : _skipPrevious,
+        icon: const Icon(Icons.skip_previous_rounded, color: Colors.white),
       ),
       IconButton(
         tooltip: 'Próxima música',

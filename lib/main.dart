@@ -282,7 +282,10 @@ class _MainShellState extends State<MainShell> {
       ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Esta faixa não está liberada para download pelo criador.')));
       return;
     }
-    if (downloadedPaths.containsKey(track.id) && await File(downloadedPaths[track.id]!).exists()) {
+    final alreadyDownloaded = downloadedPaths.containsKey(track.id) &&
+        await File(downloadedPaths[track.id]!).exists();
+    if (!mounted) return;
+    if (alreadyDownloaded) {
       ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Essa música já está salva para ouvir offline.')));
       return;
     }
@@ -313,6 +316,7 @@ class _MainShellState extends State<MainShell> {
         downloadingIds.remove(track.id);
       });
       await _saveLibrary();
+      if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('“${track.title}” salva para ouvir offline!')));
     } catch (error) {
       if (!mounted) return;

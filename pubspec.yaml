@@ -1,7 +1,7 @@
 name: cobrasong
 description: COBRASONG - música, comunidade e jogos em um só lugar.
 publish_to: "none"
-version: 0.9.7+16
+version: 0.9.8+17
 
 environment:
   sdk: ">=3.3.0 <4.0.0"
@@ -20,6 +20,15 @@ dev_dependencies:
   flutter_test:
     sdk: flutter
   flutter_lints: ^4.0.0
+  flutter_launcher_icons: ^0.14.4
+
+flutter_launcher_icons:
+  android: true
+  ios: false
+  image_path: assets/icon/cobrasong.png
+  adaptive_icon_background: "#080510"
+  adaptive_icon_foreground: assets/icon/cobrasong.png
+  adaptive_icon_foreground_inset: 16
 
 flutter:
   uses-material-design: true

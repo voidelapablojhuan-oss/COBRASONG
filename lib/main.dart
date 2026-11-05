@@ -13,14 +13,26 @@ import 'package:path_provider/path_provider.dart';
 AudioPlayer? _sharedAudioPlayer;
 AudioPlayer get sharedAudioPlayer => _sharedAudioPlayer ??= AudioPlayer();
 
+String? _audioStartupWarning;
+
+Future<void> _initializeBackgroundAudio() async {
+  try {
+    await JustAudioBackground.init(
+      androidNotificationChannelId: 'com.cobrasong.audio',
+      androidNotificationChannelName: 'COBRASONG • Reprodução',
+      androidNotificationOngoing: true,
+    ).timeout(const Duration(seconds: 15));
+  } catch (error, stackTrace) {
+    _audioStartupWarning = error.toString();
+    debugPrint('Falha ao iniciar áudio em segundo plano: $error');
+    debugPrintStack(stackTrace: stackTrace);
+  }
+}
+
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  await JustAudioBackground.init(
-    androidNotificationChannelId: 'com.cobrasong.audio',
-    androidNotificationChannelName: 'COBRASONG • Reprodução',
-    androidNotificationOngoing: true,
-  );
-  runApp(const CobraSongApp());
+  final audioInitialization = _initializeBackgroundAudio();
+  runApp(CobraSongApp(audioInitialization: audioInitialization));
 }
 
 const Color bg = Color(0xFF090A10);
@@ -30,7 +42,9 @@ const Color neon = Color(0xFFB8FF45);
 const Color muted = Color(0xFF9293A5);
 
 class CobraSongApp extends StatelessWidget {
-  const CobraSongApp({super.key});
+  final Future<void>? audioInitialization;
+
+  const CobraSongApp({super.key, this.audioInitialization});
 
   @override
   Widget build(BuildContext context) {
@@ -46,7 +60,45 @@ class CobraSongApp extends StatelessWidget {
         useMaterial3: true,
         fontFamily: 'Roboto',
       ),
-      home: const MainShell(),
+      home: audioInitialization == null
+          ? const MainShell()
+          : AppStartupGate(initialization: audioInitialization!),
+    );
+  }
+}
+
+class AppStartupGate extends StatelessWidget {
+  final Future<void> initialization;
+
+  const AppStartupGate({super.key, required this.initialization});
+
+  @override
+  Widget build(BuildContext context) {
+    return FutureBuilder<void>(
+      future: initialization,
+      builder: (context, snapshot) {
+        if (snapshot.connectionState == ConnectionState.done) {
+          return const MainShell();
+        }
+        return Scaffold(
+          backgroundColor: bg,
+          body: Center(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const Icon(Icons.graphic_eq_rounded, color: neon, size: 52),
+                const SizedBox(height: 16),
+                const CircularProgressIndicator(color: neon),
+                const SizedBox(height: 16),
+                Text(
+                  'Preparando o COBRASONG...',
+                  style: Theme.of(context).textTheme.bodyLarge?.copyWith(color: Colors.white),
+                ),
+              ],
+            ),
+          ),
+        );
+      },
     );
   }
 }
@@ -273,6 +325,20 @@ class _MainShellState extends State<MainShell> {
       }
     });
     _loadLibrary();
+    if (_audioStartupWarning != null) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text(
+              'O app abriu, mas o áudio em segundo plano não iniciou. '
+              'Os controles de mídia podem ficar limitados.',
+            ),
+            duration: Duration(seconds: 6),
+          ),
+        );
+      });
+    }
   }
 
   Future<void> _loadLibrary() async {
